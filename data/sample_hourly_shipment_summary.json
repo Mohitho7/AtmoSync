@@ -1,0 +1,19 @@
+{
+  "summary_id": "SUM-SHIP-2026-0042-20261110T0500Z",
+  "shipment_id": "SHIP-2026-0042",
+  "container_id": "CONT-8042",
+  "commodity": "mango",
+  "window_start": "2026-11-10T05:00:00Z",
+  "window_end": "2026-11-10T06:00:00Z",
+  "reading_count": 12,
+  "temperature_avg_c": 12.2,
+  "temperature_min_c": 11.8,
+  "temperature_max_c": 12.7,
+  "humidity_avg_pct": 85.9,
+  "humidity_min_pct": 84.2,
+  "humidity_max_pct": 87.1,
+  "vibration_avg_g": 0.07,
+  "vibration_max_g": 0.14,
+  "time_outside_operating_range_seconds": 0,
+  "created_at": "2026-11-10T06:01:00Z"
+}

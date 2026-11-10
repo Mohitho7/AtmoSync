@@ -1,0 +1,18 @@
+{
+  "recommendation_id": "REC-EXAMPLE-0001",
+  "shipment_id": "SHIP-2026-0042",
+  "recommended_market_id": "MARKET-EXAMPLE-001",
+  "offer_id": "OFFER-EXAMPLE-0001",
+  "assessment_id": "ROUTE-EXAMPLE-0001",
+  "recommendation_timestamp": "2026-11-10T06:06:00Z",
+  "predicted_spoilage_pct": 3.2,
+  "maximum_allowed_spoilage_pct": 5,
+  "gross_expected_revenue": 9680,
+  "additional_costs": 120,
+  "expected_net_revenue": 9560,
+  "currency": "USD",
+  "recommendation_action": "REROUTE",
+  "decision_reason": "Illustrative eligible option with sample-only values.",
+  "configuration_version": "1.0",
+  "prediction_id": "PRED-SHIP-2026-0042-20261110T0601Z"
+}

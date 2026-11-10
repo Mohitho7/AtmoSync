@@ -1,0 +1,16 @@
+{
+  "offer_id": "OFFER-EXAMPLE-0001",
+  "market_id": "MARKET-EXAMPLE-001",
+  "market_name": "Example Regional Market A",
+  "commodity": "mango",
+  "shipment_id": "SHIP-2026-0042",
+  "quoted_price": 10000,
+  "currency": "USD",
+  "price_unit": "USD/container",
+  "available_quantity": 1,
+  "market_latitude": 19.2183,
+  "market_longitude": 72.9781,
+  "offer_timestamp": "2026-11-10T05:30:00Z",
+  "offer_expiry": "2026-11-10T07:00:00Z",
+  "source": "synthetic_example_not_live_market_data"
+}
