@@ -1,210 +1,161 @@
-# AtmoSync — Micro-Climate Arbitrage Analytics
+﻿# AtmoSync
 
-## 1. Project Overview
+## Project overview
 
-AtmoSync is a data engineering and analytics project designed to monitor environmental conditions inside agricultural shipping containers.
+AtmoSync aims to turn container sensor readings and shipment context into
+timely, actionable insight for agricultural logistics. By bringing
+environmental, shipment, market, and route information together, it is
+designed to help operators recognize potential spoilage risks and make more
+informed shipment decisions.
 
-The project uses simulated IoT sensor data, real-time streaming, data transformation, and analytics to identify potential spoilage risks and support informed shipment rerouting decisions.
+The project is designed around simulated IoT data and a planned streaming,
+warehouse, transformation, and visualization stack. Technology names in this
+README describe the intended architecture; they do not imply that external
+services or integrations are currently operational.
 
-### Problem Statement
+## Problem statement
 
-Changes in temperature, humidity, and vibration during transportation can indicate that agricultural commodities are at risk of spoilage.
+Temperature, humidity, and vibration conditions can change while agricultural
+commodities are in transit. Without timely, connected shipment and market
+information, operators may have limited visibility into potential quality
+risks or the options available to respond.
 
-AtmoSync aims to collect, process, and analyze these environmental signals alongside shipment information to identify risks and provide actionable operational insights.
+AtmoSync aims to organize these signals and related data into an analytics
+workflow that can support earlier risk awareness and better-informed
+operational decisions. Predictions and analytics are intended as decision
+support, not proof of physically confirmed spoilage or a substitute for
+applicable food-safety requirements.
 
-## 2. Project Objectives
+## What AtmoSync aims to do
 
-- Simulate environmental sensor readings from agricultural shipping containers.
-- Ingest and stream sensor events in real time.
-- Store incoming sensor data in a cloud data warehouse.
-- Clean, transform, and model data for analytical use.
-- Identify potential spoilage risks and shipment anomalies.
-- Generate insights that support shipment rerouting decisions.
-- Build dashboards for monitoring shipment conditions and operational performance.
+- Simulate environmental readings from agricultural shipping containers.
+- Collect readings with shipment, container, commodity, timestamp, and location
+  context.
+- Stream sensor events for downstream processing.
+- Store and transform shipment data for analysis.
+- Surface potential environmental and spoilage risks with clear uncertainty.
+- Compare eligible shipment options using market, route, spoilage, and cost
+  information when those data sources are available.
+- Present analytical results through dashboards for operational monitoring.
 
-## 3. Technology Stack
+These are intended project capabilities. The system does not claim that a
+scientifically validated spoilage model, live market feed, route optimizer, or
+food-safety decision engine is provided.
 
-| Technology | Purpose |
-|---|---|
-| Python | IoT sensor simulation and data ingestion |
-| Apache Kafka | Real-time event streaming |
-| Snowflake | Cloud data warehouse |
-| dbt Core | Data transformation and modelling |
-| SQL | Data analysis and analytical calculations |
-| Apache Superset | Dashboard development and visualization |
-| Git & GitHub | Version control and collaboration |
+## How it works
 
-## 4. My Role — Data Engineering
+The following diagram shows the intended high-level data flow. It is an
+architecture direction, not a claim that the listed integrations are deployed.
 
-**Contributor:** Mohith  
-**Branch:** `MOHITH`  
-**Workstream:** Data Engineering
-
-My responsibility is to build the data ingestion pipeline, beginning with simulated IoT sensor events and progressing toward real-time streaming and warehouse integration.
-
-### Assigned Responsibilities
-
-- Set up the Python development environment.
-- Define the sensor event data structure.
-- Develop a Python-based IoT sensor simulator.
-- Implement sensor data validation.
-- Build a Kafka producer to publish sensor events.
-- Coordinate Kafka integration with the data engineering team.
-- Support the pipeline's integration with Snowflake.
-
-## 5. Development Progress Tracker
-
-### Phase 1 — Python Environment and Sensor Simulation
-
-| ID | Task | Status |
-|---|---|---|
-| DE-01 | Python environment setup | Completed locally |
-| DE-02 | Define sensor data schema | Pending |
-| DE-03 | Implement IoT sensor simulator | Pending |
-| DE-04 | Implement sensor data validation | Pending |
-| DE-05 | Build Kafka producer | Pending |
-
-### Phase 2 — Streaming and Warehouse Integration
-
-| ID | Task | Status |
-|---|---|---|
-| DE-06 | Kafka environment setup | Pending |
-| DE-07 | Create Kafka topics | Pending |
-| DE-08 | Implement Kafka consumer | Pending |
-| DE-09 | Create Snowflake raw tables | Pending |
-| DE-10 | Integrate Kafka with Snowflake | Pending |
-
-### Phase 3 — Data Transformation and Analytics
-
-- Create staging models using dbt.
-- Clean and standardize incoming sensor data.
-- Build analytical models for shipment monitoring.
-- Calculate relevant environmental and shipment metrics.
-- Support spoilage-risk and shipment anomaly analysis.
-
-### Phase 4 — Dashboard and Operational Insights
-
-- Connect analytical datasets to Apache Superset.
-- Develop shipment monitoring dashboards.
-- Visualize temperature, humidity, and vibration trends.
-- Present potential spoilage risks and actionable insights.
-- Support shipment rerouting analysis.
-
-*Phases 3 and 4 represent the broader project roadmap, not completed work in this branch.*
-
-## 6. DE-01 — Python Environment Setup
-
-<details>
-<summary>Implementation details</summary>
-
-The initial development environment has been configured successfully.
-
-**Completed work:**
-
-- [x] Verified Git installation.
-- [x] Verified Python 3.11.9 installation.
-- [x] Created the project directory structure.
-- [x] Created a Python virtual environment using Python 3.11.9.
-- [x] Activated the virtual environment in PowerShell.
-- [x] Upgraded pip.
-- [x] Created `requirements.txt`.
-- [x] Created `.gitignore`.
-- [x] Created `.env.example`.
-- [x] Initialized the local Git repository.
-- [x] Created the initial local commit.
-- [x] Verified the Python package environment using `pip check`.
-
-**Project structure:**
-
-```text
-AtmoSync/
-├── src/
-│   └── atmo_sync/
-│       └── __init__.py
-├── tests/
-│   └── __init__.py
-├── data/
-├── docs/
-├── .env.example
-├── .gitignore
-├── README.md
-└── requirements.txt
+```mermaid
+flowchart TD
+    S[Simulated container sensors] --> P[Python event generation and validation]
+    P --> K[Apache Kafka event stream]
+    K --> W[Snowflake data warehouse]
+    W --> D[dbt transformations]
+    D --> A[SQL analytics and risk indicators]
+    M[Market and route data<br/>(when available)] --> A
+    A --> B[Apache Superset dashboards]
+    A --> O[Operational decision support]
 ```
 
-**Current result:**
+In the intended workflow, Python produces structured sensor events. Kafka is
+the planned event-streaming layer; Snowflake is the planned analytical
+warehouse; dbt and SQL are intended to transform and analyze the data; and
+Superset is the planned visualization layer. Market and route information
+would be additional inputs when suitable sources and integrations are
+available.
 
-The local Python development environment is ready for the next implementation task.
+## Core data signals
 
-The virtual environment is excluded from version control.
+AtmoSync is designed to work with:
 
-</details>
-
-## 7. Current Development Status
-
-**Current milestone:** DE-01 completed locally.
-
-| Area | Current status |
+| Signal | Description |
 |---|---|
-| Python environment | Completed locally |
-| Project structure | Created |
-| Git initialization | Completed locally |
-| GitHub branch synchronization | Pending |
-| Sensor data schema | Not started |
-| IoT simulator | Not started |
-| Sensor validation | Not started |
-| Kafka producer | Not started |
-| Snowflake integration | Not started |
+| Temperature | Container temperature readings in degrees Celsius. |
+| Humidity | Relative humidity readings as a percentage. |
+| Vibration | Container acceleration readings in g (standard acceleration due to gravity). |
+| Container ID | Identifies the monitored shipping container. |
+| Shipment ID | Connects readings and analysis to a shipment. |
+| Commodity | Identifies the agricultural product being transported. |
+| Timestamp | Records when a sensor event or analytical result applies. |
+| Location | Latitude and longitude associated with the shipment or reading. |
+| Market and route context | Potential offer, destination, travel, and cost information for future comparison workflows. |
 
-**Important:** DE-01 has passed local validation. The merge and push to the remote `MOHITH` branch are still pending. This README does not claim that the remote branch has been updated.
+## Technology stack
 
-## 8. Upcoming Priorities
+| Technology | Intended role |
+|---|---|
+| Python | Sensor simulation, event handling, and validation. |
+| Apache Kafka | Real-time event streaming. |
+| Snowflake | Cloud data warehouse. |
+| dbt Core | Data transformation and modelling. |
+| SQL | Analytical calculations and queries. |
+| Apache Superset | Dashboarding and visualization. |
+| Git and GitHub | Source control and collaboration. |
 
-The immediate development sequence is:
+## Getting started
 
-1. Resolve the GitHub branch synchronization and publish DE-01.
-2. Complete DE-02 by defining a consistent sensor event schema.
-3. Implement DE-03, the Python IoT sensor simulator.
-4. Complete DE-04 with input validation and error handling.
-5. Implement DE-05 to publish simulated sensor events to Kafka.
+### Prerequisites
 
-The next major milestone is a working Python-based sensor event generation and ingestion pipeline.
-
-## 9. Local Development Setup
-
-### Requirements
-
-- Python 3.11
 - Git
-- Visual Studio Code (recommended)
+- Python 3.11 (recommended)
+- A terminal: PowerShell or Command Prompt on Windows, Terminal on macOS/Linux
 
-### Setup Commands
+VS Code is an optional editor. Kafka, Snowflake, dbt, and Superset are not
+required to create the local Python environment described below.
+
+### Clone the repository
+
+```shell
+git clone https://github.com/Mohitho7/AtmoSync.git
+cd AtmoSync
+```
+
+### Create and activate a virtual environment
+
+#### Windows - PowerShell
 
 ```powershell
-git clone -b MOHITH https://github.com/Mohitho7/AtmoSync.git
-cd AtmoSync
-
 py -3.11 -m venv .venv
 .venv\Scripts\Activate.ps1
-
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
 ```
 
-If PowerShell blocks virtual environment activation:
+If PowerShell blocks activation, allow scripts for the current process only,
+then activate the environment:
 
 ```powershell
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 .venv\Scripts\Activate.ps1
 ```
 
-## 10. Repository Information
+#### Windows - Command Prompt
 
-- **Repository:** [AtmoSync](https://github.com/Mohitho7/AtmoSync)
-- **Development branch:** `MOHITH`
-- **Workstream:** Data Engineering
-- **Current task:** DE-01 — Python Environment Setup
-- **Next task:** DE-02 — Sensor Data Schema
+```bat
+py -3.11 -m venv .venv
+.venv\Scripts\activate.bat
+```
 
----
+#### macOS and Linux
 
-*This README tracks the implementation progress of the AtmoSync Data Engineering workstream in the `MOHITH` branch. Task statuses should be updated as work is implemented, tested, and committed.*
+```shell
+python3.11 -m venv .venv
+source .venv/bin/activate
+```
+
+### Install Python dependencies
+
+With the virtual environment activated, upgrade pip and install the
+dependencies declared by the project:
+
+```shell
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+```
+
+The current requirements file does not install Kafka, Snowflake, dbt, or
+Superset packages; those are not needed for this local setup.
+
+## Repository
+
+[AtmoSync repository](https://github.com/Mohitho7/AtmoSync)
