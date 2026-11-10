@@ -47,17 +47,7 @@ food-safety decision engine is provided.
 The following diagram shows the intended high-level data flow. It is an
 architecture direction, not a claim that the listed integrations are deployed.
 
-```mermaid
-flowchart TD
-    S[Simulated container sensors] --> P[Python event generation and validation]
-    P --> K[Apache Kafka event stream]
-    K --> W[Snowflake data warehouse]
-    W --> D[dbt transformations]
-    D --> A[SQL analytics and risk indicators]
-    M[Market and route data<br/>(when available)] --> A
-    A --> B[Apache Superset dashboards]
-    A --> O[Operational decision support]
-```
+<img width="1142" height="1376" alt="mermaid-diagram" src="https://github.com/user-attachments/assets/0ca8fc55-5598-42b1-8729-d269638cfaee" />
 
 In the intended workflow, Python produces structured sensor events. Kafka is
 the planned event-streaming layer; Snowflake is the planned analytical
