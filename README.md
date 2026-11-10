@@ -74,4 +74,4 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 .venv\Scripts\Activate.ps1
 ```
 
-Copy `.env.example` to `.env` for local configuration and replace placeholders only in `.env`. Never commit `.env` or put real credentials in tracked files.
+.
