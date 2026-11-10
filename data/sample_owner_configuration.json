@@ -1,0 +1,18 @@
+{
+  "configuration_id": "CFG-OWNER-EXAMPLE-001",
+  "owner_id": "ORG-EXAMPLE-001",
+  "configuration_version": "1.0",
+  "sensor_interval_minutes": 5,
+  "live_raw_retention_minutes": 15,
+  "prediction_horizon_mode": "DYNAMIC",
+  "fixed_prediction_horizon_minutes": null,
+  "early_warning_hours": 10,
+  "critical_risk_hours": 5,
+  "max_predicted_spoilage_pct": 5,
+  "market_selection_priority": "MAX_EXPECTED_NET_REVENUE",
+  "historical_summary_frequency": "HOURLY",
+  "created_at": "2026-11-10T06:00:00Z",
+  "updated_at": "2026-11-10T06:00:00Z",
+  "updated_by": "USER-EXAMPLE-001",
+  "is_active": true
+}
