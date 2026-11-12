@@ -29,6 +29,7 @@ htmlcov/
 .ruff_cache/
 .tox/
 coverage.xml
+data/generated/
 
 # IDE and editor files
 .vscode/

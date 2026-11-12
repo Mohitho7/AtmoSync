@@ -59,8 +59,8 @@ My responsibility is to build the data ingestion pipeline, beginning with simula
 | ID | Task | Status |
 |---|---|---|
 | DE-01 | Python environment setup | Completed locally |
-| DE-02 | Define sensor data schema | Pending |
-| DE-03 | Implement IoT sensor simulator | Pending |
+| DE-02 | Define sensor data schema | Completed locally |
+| DE-03 | Implement IoT sensor simulator | Completed |
 | DE-04 | Implement sensor data validation | Pending |
 | DE-05 | Build Kafka producer | Pending |
 
@@ -141,7 +141,7 @@ The virtual environment is excluded from version control.
 
 ## 7. Current Development Status
 
-**Current milestone:** DE-01 completed locally.
+**Current milestone:** DE-03 sensor simulator completed locally on `MOHITH`.
 
 | Area | Current status |
 |---|---|
@@ -149,8 +149,8 @@ The virtual environment is excluded from version control.
 | Project structure | Created |
 | Git initialization | Completed locally |
 | GitHub branch synchronization | Pending |
-| Sensor data schema | Not started |
-| IoT simulator | Not started |
+| Sensor data schema | Completed locally |
+| IoT simulator | Completed locally |
 | Sensor validation | Not started |
 | Kafka producer | Not started |
 | Snowflake integration | Not started |
@@ -162,12 +162,11 @@ The virtual environment is excluded from version control.
 The immediate development sequence is:
 
 1. Resolve the GitHub branch synchronization and publish DE-01.
-2. Complete DE-02 by defining a consistent sensor event schema.
-3. Implement DE-03, the Python IoT sensor simulator.
-4. Complete DE-04 with input validation and error handling.
-5. Implement DE-05 to publish simulated sensor events to Kafka.
+2. Complete DE-04 with input validation and error handling.
+3. Implement DE-05 to publish validated simulated sensor events to Kafka.
 
-The next major milestone is a working Python-based sensor event generation and ingestion pipeline.
+DE-02 contracts and the DE-03 simulator are complete locally; Kafka publishing
+and later pipeline integration remain future work.
 
 ## 9. Local Development Setup
 
@@ -202,8 +201,8 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 - **Repository:** [AtmoSync](https://github.com/Mohitho7/AtmoSync)
 - **Development branch:** `MOHITH`
 - **Workstream:** Data Engineering
-- **Current task:** DE-01 — Python Environment Setup
-- **Next task:** DE-02 — Sensor Data Schema
+- **Current task:** DE-03 — IoT Sensor Simulator (completed locally)
+- **Next task:** DE-04 — Sensor Data Validation
 
 ---
 

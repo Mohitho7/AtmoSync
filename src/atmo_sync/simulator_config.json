@@ -1,0 +1,65 @@
+{
+  "schema_version": "1.0",
+  "sensor_interval_minutes": 5,
+  "random_seed": 42,
+  "simulation_start_utc": "2026-11-10T06:00:00Z",
+  "containers": [
+    {
+      "shipment_id": "SHIP-001",
+      "container_id": "CONT-001",
+      "sensor_id": "SENSOR-001",
+      "commodity": "mango",
+      "location": {
+        "latitude": 19.076,
+        "longitude": 72.8777
+      },
+      "initial_temperature_c": 12.4,
+      "initial_humidity_pct": 86.5,
+      "initial_vibration_g": 0.08,
+      "temperature_variation_c": 0.6,
+      "humidity_variation_pct": 3.5,
+      "vibration_variation_g": 0.02,
+      "temperature_drift_c": 0.1,
+      "humidity_drift_pct": 0.2,
+      "vibration_drift_g": 0.005
+    },
+    {
+      "shipment_id": "SHIP-001",
+      "container_id": "CONT-002",
+      "sensor_id": "SENSOR-002",
+      "commodity": "banana",
+      "location": {
+        "latitude": 13.0827,
+        "longitude": 80.2707
+      },
+      "initial_temperature_c": 15.1,
+      "initial_humidity_pct": 81.2,
+      "initial_vibration_g": 0.11,
+      "temperature_variation_c": 0.7,
+      "humidity_variation_pct": 4.0,
+      "vibration_variation_g": 0.025,
+      "temperature_drift_c": 0.15,
+      "humidity_drift_pct": 0.25,
+      "vibration_drift_g": 0.006
+    },
+    {
+      "shipment_id": "SHIP-002",
+      "container_id": "CONT-003",
+      "sensor_id": "SENSOR-003",
+      "commodity": "grape",
+      "location": {
+        "latitude": 6.5244,
+        "longitude": 3.3792
+      },
+      "initial_temperature_c": 10.8,
+      "initial_humidity_pct": 89.4,
+      "initial_vibration_g": 0.09,
+      "temperature_variation_c": 0.5,
+      "humidity_variation_pct": 3.2,
+      "vibration_variation_g": 0.018,
+      "temperature_drift_c": 0.08,
+      "humidity_drift_pct": 0.18,
+      "vibration_drift_g": 0.004
+    }
+  ]
+}
