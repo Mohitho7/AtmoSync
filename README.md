@@ -58,21 +58,16 @@ My responsibility is to build the data ingestion pipeline, beginning with simula
 
 | ID | Task | Status |
 |---|---|---|
-| DE-01 | Python environment setup | Completed locally |
-| DE-02 | Define sensor data schema | Completed locally |
+| DE-01 | Python environment setup | Completed |
+| DE-02 | Data contracts and validation | Completed |
 | DE-03 | Implement IoT sensor simulator | Completed |
-| DE-04 | Implement sensor data validation | Pending |
-| DE-05 | Build Kafka producer | Pending |
 
-### Phase 2 — Streaming and Warehouse Integration
+### Phase 2 — Kafka Infrastructure and Producer Integration
 
 | ID | Task | Status |
 |---|---|---|
-| DE-06 | Kafka environment setup | Pending |
-| DE-07 | Create Kafka topics | Pending |
-| DE-08 | Implement Kafka consumer | Pending |
-| DE-09 | Create Snowflake raw tables | Pending |
-| DE-10 | Integrate Kafka with Snowflake | Pending |
+| DE-04A | Kafka infrastructure (Docker Compose/KRaft) | Completed; runtime verified |
+| DE-04B | Python producer integration with the existing sensor simulator | Next |
 
 ### Phase 3 — Data Transformation and Analytics
 
@@ -141,32 +136,35 @@ The virtual environment is excluded from version control.
 
 ## 7. Current Development Status
 
-**Current milestone:** DE-03 sensor simulator completed locally on `MOHITH`.
+**Latest completed milestone:** DE-04A Kafka infrastructure, runtime verified
+on `MOHITH`.
+
+**Next milestone:** DE-04B Python producer integration with the existing
+sensor simulator.
 
 | Area | Current status |
 |---|---|
-| Python environment | Completed locally |
+| DE-01 Python environment | Completed |
+| DE-02 data contracts and validation | Completed |
+| DE-03 sensor simulator | Completed |
+| DE-04A Kafka infrastructure | Completed; Docker/Kafka runtime verified |
 | Project structure | Created |
-| Git initialization | Completed locally |
-| GitHub branch synchronization | Pending |
-| Sensor data schema | Completed locally |
-| IoT simulator | Completed locally |
-| Sensor validation | Not started |
-| Kafka producer | Not started |
-| Snowflake integration | Not started |
+| Git initialization | Completed |
+| GitHub branch synchronization | MOHITH branch synchronized through DE-03 |
+| DE-04B producer integration | Not implemented; next milestone |
 
-**Important:** DE-01 has passed local validation. The merge and push to the remote `MOHITH` branch are still pending. This README does not claim that the remote branch has been updated.
+DE-04A verification confirmed Docker Engine and Compose, Kafka 3.9.1 broker
+health, all four topic configurations, and a test message surviving a
+container stop/start. See the [DE-04A verification record](docs/de-04-kafka-infrastructure.md#verification-record).
 
 ## 8. Upcoming Priorities
 
-The immediate development sequence is:
+The next milestone is **DE-04B: Python producer integration with the existing
+sensor simulator**.
 
-1. Resolve the GitHub branch synchronization and publish DE-01.
-2. Complete DE-04 with input validation and error handling.
-3. Implement DE-05 to publish validated simulated sensor events to Kafka.
-
-DE-02 contracts and the DE-03 simulator are complete locally; Kafka publishing
-and later pipeline integration remain future work.
+Producer integration is not implemented yet. Transactional validation,
+deduplication, retry/DLQ processing, Snowflake integration, dbt models, and
+dashboards are also not implemented.
 
 ## 9. Local Development Setup
 
@@ -201,8 +199,7 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 - **Repository:** [AtmoSync](https://github.com/Mohitho7/AtmoSync)
 - **Development branch:** `MOHITH`
 - **Workstream:** Data Engineering
-- **Current task:** DE-03 — IoT Sensor Simulator (completed locally)
-- **Next task:** DE-04 — Sensor Data Validation
+- **Next milestone:** DE-04B — Python producer integration with the existing sensor simulator
 
 ---
 
