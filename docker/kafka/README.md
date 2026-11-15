@@ -26,9 +26,11 @@ docker compose exec -T kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server l
 ```
 
 The initialization script uses `--if-not-exists`, then checks partition
-counts, replication factor, and cleanup policy. It exits non-zero if an
-existing topic has incompatible settings; it does not silently reconfigure
-that topic.
+counts, replication factor, cleanup policy, and maximum record size. It
+idempotently sets topic message-size limits (1 MiB for raw, validated, and
+deduplication topics; 6 MiB for DLQ Kafka records). The processor separately
+caps serialized DLQ JSON envelopes at 4 MiB, leaving room for keys and Kafka
+record framing. It exits non-zero for partition or cleanup-policy mismatches.
 
 Stop and restart without removing persisted data:
 

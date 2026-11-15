@@ -30,6 +30,8 @@ htmlcov/
 .tox/
 coverage.xml
 data/generated/
+de04-audit-bundle.txt
+de04-final-audit-bundle.txt
 
 # IDE and editor files
 .vscode/

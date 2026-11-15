@@ -182,13 +182,15 @@ The simulator tests cover configuration validation, event shape and
 constraints, repeatable measurements, finite and continuous execution,
 JSONL output modes, and use of the DE-02 validator.
 
-## Limitations and DE-05 integration
+## Limitations and Kafka integration
 
 This simulator has no Kafka or Snowflake dependency, persistence layer, or
 physical sensor integration. Its values are illustrative synthetic telemetry,
 not evidence of environmental conditions or product safety.
 
-DE-05 can read each JSONL line as a UTF-8 JSON object, validate it with
-`validate_sensor_event()`, and publish the validated object to a Kafka topic.
-The Kafka producer should preserve `event_id` for downstream deduplication
-and should define its own delivery, retry, and error-handling policy.
+DE-04B provides a separate producer command that consumes events directly
+from `SensorSimulator`, validates them with `validate_sensor_event()`, and
+publishes them to Kafka. The simulator remains usable without connecting to a
+broker. The producer preserves `event_id` as the Kafka message key; an
+application-level deduplication ledger and downstream delivery processing
+remain outside this milestone.

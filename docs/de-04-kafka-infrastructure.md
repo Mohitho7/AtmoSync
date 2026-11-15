@@ -15,6 +15,8 @@ handling, or application-level DLQ behavior.
 - Docker Compose service: `kafka`.
 - Persistent named volume: `kafka-data`, mounted at
   `/var/lib/kafka/data`.
+- Broker maximum message and replica-fetch sizes: 6 MiB, to allow Kafka record
+  overhead and keys alongside bounded DLQ envelopes.
 - Host connection: `localhost:9092`.
 - Compose-network connection: `kafka:29092`.
 - Controller listener: `kafka:9093`, not published to the host.
@@ -30,20 +32,22 @@ the host's storage and Docker volume lifecycle.
 ## Topics
 
 Run `docker/kafka/init-topics.sh` inside the broker container. It uses
-`--if-not-exists`, then verifies the existing or newly created topic's
-partition count, replication factor, and explicit cleanup policy. A mismatch
-causes a non-zero exit; the script intentionally does not alter incompatible
-existing topics.
+`--if-not-exists`, then verifies partition count, replication factor, cleanup
+policy, and maximum record size. It idempotently sets topic limits; partition
+count and cleanup-policy mismatches cause a non-zero exit rather than being
+silently changed.
 
-| Topic | Partitions | Replication factor | Cleanup policy |
-|---|---:|---:|---|
-| `sensor-events` | 1 | 1 | `delete` |
-| `sensor-events-validated` | 6 | 1 | `delete` |
-| `sensor-events-dlq` | 3 | 1 | `delete` |
-| `sensor-event-dedup` | 1 | 1 | `compact` |
+| Topic | Partitions | Replication factor | Cleanup policy | Max message |
+|---|---:|---:|---|---:|
+| `sensor-events` | 1 | 1 | `delete` | 1 MiB |
+| `sensor-events-validated` | 6 | 1 | `delete` | 1 MiB |
+| `sensor-events-dlq` | 3 | 1 | `delete` | 6 MiB record |
+| `sensor-event-dedup` | 1 | 1 | `compact` | 1 MiB |
 
-The compacted ledger topic is infrastructure only; no event-ID deduplication
-behavior is implemented here.
+The DE-04C processor caps serialized DLQ JSON envelopes at 4 MiB. The 6 MiB
+Kafka record limit leaves room for message keys and Kafka record framing.
+The compacted ledger topic is infrastructure only in DE-04A; event-ID
+deduplication is implemented in DE-04C.
 
 ## Requirements
 
@@ -68,9 +72,9 @@ Verified on Windows with Docker Engine **29.9.3**, Docker Compose
   `healthy`.
 - The topic initializer completed successfully and verified all four topics:
   `sensor-events` (1 partition, `delete`), `sensor-events-validated`
-  (6 partitions, `delete`), `sensor-events-dlq` (3 partitions, `delete`),
-  and `sensor-event-dedup` (1 partition, `compact`). Each topic had
-  replication factor 1.
+  (6 partitions, `delete`), `sensor-events-dlq` (3 partitions, `delete`, 6 MiB
+  record limit), and `sensor-event-dedup` (1 partition, `compact`). Each topic
+  had replication factor 1.
 - A valid test event was produced, Kafka was stopped and started, and the
   event was read back from `sensor-events` after restart.
 - The topic initializer script was normalized to LF line endings after a
@@ -158,7 +162,9 @@ Kafka storage only; it is not an implemented AtmoSync producer.
 Topic creation is idempotent for correctly configured existing topics.
 Kafka does not change a topic's partition count through `--if-not-exists`;
 the initializer detects incompatible existing partition counts and cleanup
-policies and reports an error for an operator to resolve.
+policies and reports an error for an operator to resolve. It sets
+`max.message.bytes` on all four topics idempotently, including an explicit
+6 MiB limit on `sensor-events-dlq` and a 1 MiB limit on the raw topic.
 
 The named volume protects broker log data across container recreation while
 the volume is retained. It is not a backup. Removing the volume destroys the

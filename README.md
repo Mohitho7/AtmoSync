@@ -62,12 +62,13 @@ My responsibility is to build the data ingestion pipeline, beginning with simula
 | DE-02 | Data contracts and validation | Completed |
 | DE-03 | Implement IoT sensor simulator | Completed |
 
-### Phase 2 — Kafka Infrastructure and Producer Integration
+### Phase 2 — Kafka Infrastructure, Ingestion, and Processing
 
 | ID | Task | Status |
 |---|---|---|
 | DE-04A | Kafka infrastructure (Docker Compose/KRaft) | Completed; runtime verified |
-| DE-04B | Python producer integration with the existing sensor simulator | Next |
+| DE-04B | Python producer integration with the existing sensor simulator | Completed; Kafka delivery verified |
+| DE-04C | Transactional validation and event-ID deduplication | Completed; Kafka integration verified |
 
 ### Phase 3 — Data Transformation and Analytics
 
@@ -136,11 +137,8 @@ The virtual environment is excluded from version control.
 
 ## 7. Current Development Status
 
-**Latest completed milestone:** DE-04A Kafka infrastructure, runtime verified
-on `MOHITH`.
-
-**Next milestone:** DE-04B Python producer integration with the existing
-sensor simulator.
+**Latest completed milestone:** DE-04C transactional validation and event-ID
+deduplication; unit tests and local broker integration verified on `MOHITH`.
 
 | Area | Current status |
 |---|---|
@@ -148,23 +146,28 @@ sensor simulator.
 | DE-02 data contracts and validation | Completed |
 | DE-03 sensor simulator | Completed |
 | DE-04A Kafka infrastructure | Completed; Docker/Kafka runtime verified |
+| DE-04B Python producer integration | Completed; unit and Kafka integration tests passed |
+| DE-04C transactional validation and deduplication | Completed; unit and Kafka integration tests passed |
 | Project structure | Created |
 | Git initialization | Completed |
-| GitHub branch synchronization | MOHITH branch synchronized through DE-03 |
-| DE-04B producer integration | Not implemented; next milestone |
+| GitHub branch synchronization | MOHITH branch synchronized through DE-04A |
 
 DE-04A verification confirmed Docker Engine and Compose, Kafka 3.9.1 broker
 health, all four topic configurations, and a test message surviving a
-container stop/start. See the [DE-04A verification record](docs/de-04-kafka-infrastructure.md#verification-record).
+container stop/start. DE-04B's producer was verified against the local
+`sensor-events` topic. DE-04C's integration test verified transactional
+validation and DLQ routing, then restarted the processor and confirmed
+duplicate suppression from the restored ledger. See the [DE-04A verification
+record](docs/de-04-kafka-infrastructure.md#verification-record),
+[DE-04B producer documentation](docs/de-04b-kafka-producer.md), and
+[DE-04C processor documentation](docs/de-04c-transactional-validation-deduplication.md).
 
 ## 8. Upcoming Priorities
 
-The next milestone is **DE-04B: Python producer integration with the existing
-sensor simulator**.
+**Next milestone:** DE-04D — retry-topic and DLQ handling.
 
-Producer integration is not implemented yet. Transactional validation,
-deduplication, retry/DLQ processing, Snowflake integration, dbt models, and
-dashboards are also not implemented.
+Advanced retry processing and DLQ consumption, Snowflake integration, dbt
+models, and dashboards are not implemented in this work.
 
 ## 9. Local Development Setup
 
@@ -184,7 +187,7 @@ py -3.11 -m venv .venv
 .venv\Scripts\Activate.ps1
 
 python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
+python -m pip install -e ".[dev]"
 ```
 
 If PowerShell blocks virtual environment activation:
@@ -199,7 +202,7 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 - **Repository:** [AtmoSync](https://github.com/Mohitho7/AtmoSync)
 - **Development branch:** `MOHITH`
 - **Workstream:** Data Engineering
-- **Next milestone:** DE-04B — Python producer integration with the existing sensor simulator
+- **Latest completed milestone:** DE-04C — transactional validation and event-ID deduplication
 
 ---
 

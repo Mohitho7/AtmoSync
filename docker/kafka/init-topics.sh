@@ -5,10 +5,10 @@ bootstrap_server="${KAFKA_BOOTSTRAP_SERVER:-localhost:9092}"
 kafka_bin="${KAFKA_BIN_DIR:-/opt/kafka/bin}"
 
 topics=(
-  "sensor-events:1:delete"
-  "sensor-events-validated:6:delete"
-  "sensor-events-dlq:3:delete"
-  "sensor-event-dedup:1:compact"
+  "sensor-events:1:delete:1048588"
+  "sensor-events-validated:6:delete:1048588"
+  "sensor-events-dlq:3:delete:6291456"
+  "sensor-event-dedup:1:compact:1048588"
 )
 
 fail() {
@@ -17,19 +17,32 @@ fail() {
 }
 
 for specification in "${topics[@]}"; do
-  IFS=: read -r topic partitions cleanup_policy <<<"$specification"
+  IFS=: read -r topic partitions cleanup_policy max_message_bytes <<<"$specification"
 
-  printf 'Creating topic if needed: %s (%s partitions, cleanup.policy=%s)\n' \
-    "$topic" "$partitions" "$cleanup_policy"
+  printf 'Creating/verifying topic: %s (%s partitions, cleanup.policy=%s, max.message.bytes=%s)\n' \
+    "$topic" "$partitions" "$cleanup_policy" "$max_message_bytes"
+  create_args=(
+    --bootstrap-server "$bootstrap_server"
+    --create
+    --if-not-exists
+    --topic "$topic"
+    --partitions "$partitions"
+    --replication-factor 1
+    --config "cleanup.policy=$cleanup_policy"
+    --config "max.message.bytes=$max_message_bytes"
+  )
   if ! "$kafka_bin/kafka-topics.sh" \
-    --bootstrap-server "$bootstrap_server" \
-    --create \
-    --if-not-exists \
-    --topic "$topic" \
-    --partitions "$partitions" \
-    --replication-factor 1 \
-    --config "cleanup.policy=$cleanup_policy"; then
+    "${create_args[@]}"; then
     fail "could not create or locate topic '$topic'"
+  fi
+
+  if ! "$kafka_bin/kafka-configs.sh" \
+    --bootstrap-server "$bootstrap_server" \
+    --alter \
+    --entity-type topics \
+    --entity-name "$topic" \
+    --add-config "max.message.bytes=$max_message_bytes"; then
+    fail "could not set max.message.bytes=$max_message_bytes for '$topic'"
   fi
 
   description="$("$kafka_bin/kafka-topics.sh" \
@@ -45,6 +58,9 @@ for specification in "${topics[@]}"; do
   fi
   if ! grep -Fq "cleanup.policy=$cleanup_policy" <<<"$description"; then
     fail "topic '$topic' does not have cleanup.policy=$cleanup_policy: $description"
+  fi
+  if ! grep -Fq "max.message.bytes=$max_message_bytes" <<<"$description"; then
+    fail "topic '$topic' does not have max.message.bytes=$max_message_bytes: $description"
   fi
 
   printf 'Verified topic: %s\n%s\n' "$topic" "$description"
