@@ -5,7 +5,9 @@ from __future__ import annotations
 import base64
 import copy
 import json
+import time
 import unittest
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -25,6 +27,13 @@ from atmo_sync.processor import (
     restore_deduplication_ledger,
 )
 from atmo_sync.simulator import SensorSimulator
+from atmo_sync.retry import (
+    DEFAULT_RETRY_TOPIC,
+    MAX_RETRY_KAFKA_RECORD_BYTES,
+    RetryEnvelope,
+    TransientProcessingError,
+    utc_timestamp,
+)
 
 
 def sample_event() -> dict:
@@ -125,6 +134,9 @@ class FakeInputConsumer:
         self.subscribed = None
         self.closed = False
         self.group_metadata = object()
+        self.messages = []
+        self.paused = []
+        self.resumed = []
 
     def list_topics(self, timeout):
         topics = {
@@ -132,6 +144,7 @@ class FakeInputConsumer:
             "sensor-events-validated": 6,
             "sensor-events-dlq": 3,
             "sensor-event-dedup": 1,
+            "sensor-events-retry": 1,
         }
         return SimpleNamespace(
             topics={
@@ -150,7 +163,13 @@ class FakeInputConsumer:
         return self.group_metadata
 
     def poll(self, _timeout):
-        return None
+        return self.messages.pop(0) if self.messages else None
+
+    def pause(self, partitions):
+        self.paused.extend(partitions)
+
+    def resume(self, partitions):
+        self.resumed.extend(partitions)
 
     def close(self):
         self.closed = True
@@ -199,11 +218,15 @@ class FakeAdminClient:
         *,
         input_max_bytes=MAX_RAW_MESSAGE_BYTES,
         dlq_max_bytes=MAX_DLQ_KAFKA_RECORD_BYTES,
+        retry_max_bytes=4 * 1024 * 1024,
         cleanup_policy="compact",
+        retry_cleanup_policy="delete",
     ):
         self.input_max_bytes = input_max_bytes
         self.dlq_max_bytes = dlq_max_bytes
+        self.retry_max_bytes = retry_max_bytes
         self.cleanup_policy = cleanup_policy
+        self.retry_cleanup_policy = retry_cleanup_policy
 
     def describe_configs(self, resources):
         configs = {
@@ -221,6 +244,14 @@ class FakeAdminClient:
                 ),
                 "cleanup.policy": SimpleNamespace(value=self.cleanup_policy),
             },
+            "sensor-events-retry": {
+                "max.message.bytes": SimpleNamespace(
+                    value=str(self.retry_max_bytes)
+                ),
+                "cleanup.policy": SimpleNamespace(
+                    value=self.retry_cleanup_policy
+                ),
+            },
         }
         return {
             resource: FakeAdminFuture(configs[resource.name])
@@ -228,7 +259,9 @@ class FakeAdminClient:
         }
 
 
-def make_processor(ledger_records=(), *, admin_client=None, initialize=True):
+def make_processor(
+    ledger_records=(), *, admin_client=None, initialize=True, config=None
+):
     producer = FakeTransactionalProducer()
     consumer = FakeInputConsumer()
     high = max((record.offset() + 1 for record in ledger_records), default=0)
@@ -240,7 +273,7 @@ def make_processor(ledger_records=(), *, admin_client=None, initialize=True):
         return restore_client
 
     processor = TransactionalValidationProcessor(
-        ProcessorConfig(
+        config or ProcessorConfig(
             operation_timeout=0.1,
             transaction_timeout=0.2,
             ledger_restore_timeout=0.1,
@@ -608,6 +641,32 @@ class TransactionalProcessorTests(unittest.TestCase):
         self.assertFalse(any(call[0] == "begin_transaction" for call in producer.calls))
         self.assertFalse(any(call[0] == "send_offsets" for call in producer.calls))
 
+    def test_unavailable_broker_does_not_commit_input_offset_or_retry(self):
+        processor, producer, _, _, _ = make_processor(
+            config=ProcessorConfig(
+                max_retry_attempts=2,
+                retry_base_delay_seconds=0,
+                retry_max_delay_seconds=1,
+                retry_jitter_fraction=0,
+                operation_timeout=0.1,
+                transaction_timeout=0.2,
+                ledger_restore_timeout=0.1,
+                poll_timeout=0.01,
+            )
+        )
+        producer.fail_begin = KafkaException("broker unavailable")
+        with patch.object(
+            processor,
+            "_validate_for_processing",
+            side_effect=TransientProcessingError("temporary failure"),
+        ):
+            with self.assertRaisesRegex(ProcessorError, "could not begin"):
+                processor.process_message(raw_message(sample_event(), offset=105))
+
+        self.assertEqual(producer.committed, [])
+        self.assertEqual(producer.aborted, [])
+        self.assertFalse(any(call[0] == "send_offsets" for call in producer.calls))
+
     def test_deep_json_and_nonfinite_values_are_dead_lettered_as_raw_bytes(self):
         processor, producer, _, _, _ = make_processor()
         event = sample_event()
@@ -717,7 +776,10 @@ class TransactionalProcessorTests(unittest.TestCase):
             ]
         )
         self.assertEqual(processor.ledger[event["event_id"]], digest)
-        self.assertEqual(consumer.subscribed, ["sensor-events"])
+        self.assertEqual(
+            consumer.subscribed,
+            ["sensor-events", "sensor-events-retry"],
+        )
 
     def test_producer_and_consumer_configs_are_transactional_and_read_committed(self):
         with (
@@ -743,11 +805,11 @@ class TransactionalProcessorTests(unittest.TestCase):
         self.assertEqual(consumer_config["auto.offset.reset"], "earliest")
         self.assertEqual(
             consumer_config["max.partition.fetch.bytes"],
-            2 * MAX_RAW_MESSAGE_BYTES,
+            2 * 4 * 1024 * 1024,
         )
         self.assertEqual(
             consumer_config["fetch.max.bytes"],
-            2 * MAX_RAW_MESSAGE_BYTES,
+            2 * 4 * 1024 * 1024,
         )
         admin_factory.assert_called_once_with(
             {"bootstrap.servers": "localhost:9092"}
@@ -771,6 +833,24 @@ class TransactionalProcessorTests(unittest.TestCase):
         with self.assertRaisesRegex(ProcessorError, "expected at least"):
             processor._verify_topics()
 
+    def test_topic_verification_rejects_undersized_retry_topic(self):
+        processor, _, _, _, _ = make_processor(
+            admin_client=FakeAdminClient(
+                retry_max_bytes=MAX_RETRY_KAFKA_RECORD_BYTES - 1
+            ),
+            initialize=False,
+        )
+        with self.assertRaisesRegex(ProcessorError, "expected at least"):
+            processor._verify_topics()
+
+    def test_topic_verification_rejects_compacted_retry_topic(self):
+        processor, _, _, _, _ = make_processor(
+            admin_client=FakeAdminClient(retry_cleanup_policy="compact"),
+            initialize=False,
+        )
+        with self.assertRaisesRegex(ProcessorError, "delete-only"):
+            processor._verify_topics()
+
     def test_topic_verification_rejects_oversized_raw_topic(self):
         processor, _, _, _, _ = make_processor(
             admin_client=FakeAdminClient(input_max_bytes=MAX_RAW_MESSAGE_BYTES + 1),
@@ -789,6 +869,286 @@ class TransactionalProcessorTests(unittest.TestCase):
     def test_config_rejects_reused_topic_names(self):
         with self.assertRaisesRegex(ValueError, "must be distinct"):
             ProcessorConfig(validated_topic="sensor-events")
+
+
+class RetryProcessingTests(unittest.TestCase):
+    def retry_config(self, **overrides):
+        values = {
+            "operation_timeout": 0.1,
+            "transaction_timeout": 0.2,
+            "ledger_restore_timeout": 0.1,
+            "poll_timeout": 0.01,
+            "max_retry_attempts": 2,
+            "retry_base_delay_seconds": 0,
+            "retry_max_delay_seconds": 1,
+            "retry_jitter_fraction": 0,
+        }
+        values.update(overrides)
+        return ProcessorConfig(**values)
+
+    def retry_message(self, producer, *, offset=8, transaction_index=-1):
+        topic, key, value = producer.committed[transaction_index]["outputs"][0]
+        self.assertEqual(topic, DEFAULT_RETRY_TOPIC)
+        return FakeMessage(DEFAULT_RETRY_TOPIC, 0, offset, value, key)
+
+    def test_transient_failure_retries_then_commits_validated_event_and_offsets(self):
+        event = sample_event()
+        raw = json.dumps(event, separators=(",", ":")).encode("utf-8")
+        processor, producer, _, _, _ = make_processor(
+            config=self.retry_config()
+        )
+        with patch.object(
+            processor,
+            "_validate_for_processing",
+            side_effect=[
+                TransientProcessingError("temporary dependency failure"),
+                None,
+            ],
+        ):
+            first = processor.process_message(
+                FakeMessage("sensor-events", 0, 12, raw, event["event_id"].encode())
+            )
+            retry_record = self.retry_message(producer)
+            second = processor.process_message(retry_record)
+
+        self.assertEqual(first, ProcessingOutcome.RETRY_SCHEDULED)
+        self.assertEqual(second, ProcessingOutcome.VALIDATED)
+        retry_envelope = RetryEnvelope.from_bytes(
+            producer.committed[0]["outputs"][0][2]
+        )
+        self.assertEqual(retry_envelope.raw_payload, raw)
+        self.assertEqual(retry_envelope.source_topic, "sensor-events")
+        self.assertEqual(retry_envelope.source_partition, 0)
+        self.assertEqual(retry_envelope.source_offset, 12)
+        self.assertEqual(retry_envelope.attempt_number, 1)
+        self.assertEqual(
+            producer.committed[0]["offsets"][0].offset,
+            13,
+        )
+        self.assertEqual(
+            producer.committed[1]["offsets"][0].topic,
+            DEFAULT_RETRY_TOPIC,
+        )
+        self.assertEqual(producer.committed[1]["offsets"][0].offset, 9)
+        self.assertEqual(
+            [output[0] for output in producer.committed[1]["outputs"]],
+            ["sensor-events-validated", "sensor-event-dedup"],
+        )
+
+    def test_retries_are_bounded_and_exhaustion_routes_to_dlq(self):
+        event = sample_event()
+        processor, producer, _, _, _ = make_processor(
+            config=self.retry_config(max_retry_attempts=2)
+        )
+        with patch.object(
+            processor,
+            "_validate_for_processing",
+            side_effect=TransientProcessingError("temporary failure"),
+        ):
+            first = processor.process_message(raw_message(event, offset=20))
+            second = processor.process_message(
+                self.retry_message(producer, offset=40, transaction_index=0)
+            )
+            third = processor.process_message(
+                self.retry_message(producer, offset=41, transaction_index=1)
+            )
+
+        self.assertEqual(first, ProcessingOutcome.RETRY_SCHEDULED)
+        self.assertEqual(second, ProcessingOutcome.RETRY_SCHEDULED)
+        self.assertEqual(third, ProcessingOutcome.RETRY_EXHAUSTED)
+        retry_outputs = [
+            output
+            for transaction in producer.committed
+            for output in transaction["outputs"]
+            if output[0] == DEFAULT_RETRY_TOPIC
+        ]
+        dlq_outputs = [
+            output
+            for transaction in producer.committed
+            for output in transaction["outputs"]
+            if output[0] == "sensor-events-dlq"
+        ]
+        self.assertEqual(len(retry_outputs), 2)
+        self.assertEqual(len(dlq_outputs), 1)
+        envelope = json.loads(dlq_outputs[0][2])
+        self.assertEqual(envelope["error_code"], "RETRY_EXHAUSTED")
+        self.assertEqual(envelope["original_event"], event)
+        self.assertEqual(envelope["source_offset"], 20)
+        self.assertEqual(envelope["retry_metadata"]["attempt_number"], 2)
+        self.assertEqual(
+            envelope["retry_metadata"]["failure_class"], "transient_exhausted"
+        )
+        self.assertEqual(
+            [
+                attempt["attempt_number"]
+                for attempt in envelope["retry_metadata"]["attempt_history"]
+            ],
+            [0, 1, 2],
+        )
+        self.assertTrue(
+            all(
+                attempt["failure_reason"] == "temporary failure"
+                for attempt in envelope["retry_metadata"]["attempt_history"]
+            )
+        )
+        self.assertEqual(producer.committed[-1]["offsets"][0].topic, DEFAULT_RETRY_TOPIC)
+        self.assertEqual(producer.committed[-1]["offsets"][0].offset, 42)
+
+    def test_permanent_failure_routes_directly_to_dlq_without_retry(self):
+        invalid = sample_event()
+        invalid["readings"]["humidity_pct"] = 101
+        processor, producer, _, _, _ = make_processor(
+            config=self.retry_config()
+        )
+
+        outcome = processor.process_message(raw_message(invalid, offset=50))
+
+        self.assertEqual(outcome, ProcessingOutcome.INVALID)
+        self.assertEqual(len(producer.committed), 1)
+        output = producer.committed[0]["outputs"][0]
+        self.assertEqual(output[0], "sensor-events-dlq")
+        envelope = json.loads(output[2])
+        self.assertEqual(envelope["retry_metadata"]["attempt_number"], 0)
+        self.assertEqual(envelope["retry_metadata"]["failure_class"], "permanent")
+        self.assertEqual(
+            producer.committed[0]["offsets"][0].offset,
+            51,
+        )
+
+    def test_duplicate_raw_event_during_retry_does_not_duplicate_output(self):
+        event = sample_event()
+        processor, producer, _, _, _ = make_processor(
+            config=self.retry_config()
+        )
+        calls = 0
+
+        def fail_once(value):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise TransientProcessingError("temporary failure")
+            from atmo_sync.contracts import validate_sensor_event
+
+            validate_sensor_event(value)
+
+        with patch.object(processor, "_validate_for_processing", side_effect=fail_once):
+            first = processor.process_message(raw_message(event, offset=60))
+            duplicate = processor.process_message(raw_message(event, offset=61))
+            retried = processor.process_message(
+                self.retry_message(producer, offset=70, transaction_index=0)
+            )
+
+        self.assertEqual(first, ProcessingOutcome.RETRY_SCHEDULED)
+        self.assertEqual(duplicate, ProcessingOutcome.VALIDATED)
+        self.assertEqual(retried, ProcessingOutcome.DUPLICATE)
+        validated = [
+            output
+            for transaction in producer.committed
+            for output in transaction["outputs"]
+            if output[0] == "sensor-events-validated"
+        ]
+        self.assertEqual(len(validated), 1)
+
+    def test_restart_can_resume_a_transactionally_published_retry_record(self):
+        event = sample_event()
+        config = self.retry_config()
+        first_processor, first_producer, _, _, _ = make_processor(config=config)
+        with patch.object(
+            first_processor,
+            "_validate_for_processing",
+            side_effect=TransientProcessingError("temporary failure"),
+        ):
+            outcome = first_processor.process_message(raw_message(event, offset=80))
+        retry_record = self.retry_message(first_producer, offset=90)
+        self.assertEqual(outcome, ProcessingOutcome.RETRY_SCHEDULED)
+        self.assertEqual(first_producer.committed[0]["offsets"][0].offset, 81)
+        first_processor.close()
+
+        restarted, producer, _, _, _ = make_processor(config=config)
+        outcome = restarted.process_message(retry_record)
+
+        self.assertEqual(outcome, ProcessingOutcome.VALIDATED)
+        self.assertEqual(
+            producer.committed[0]["offsets"][0].topic,
+            DEFAULT_RETRY_TOPIC,
+        )
+
+    def test_failed_retry_publication_aborts_without_committing_source_offset(self):
+        processor, producer, _, _, _ = make_processor(
+            config=self.retry_config()
+        )
+        producer.fail_produce = RuntimeError("retry broker unavailable")
+        with patch.object(
+            processor,
+            "_validate_for_processing",
+            side_effect=TransientProcessingError("temporary failure"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "retry broker unavailable"):
+                processor.process_message(raw_message(sample_event(), offset=100))
+
+        self.assertEqual(producer.committed, [])
+        self.assertEqual(len(producer.aborted), 1)
+        self.assertFalse(any(call[0] == "send_offsets" for call in producer.calls))
+
+    def test_failed_dlq_publication_aborts_without_committing_source_offset(self):
+        processor, producer, _, _, _ = make_processor()
+        producer.fail_produce = RuntimeError("DLQ broker unavailable")
+        invalid = sample_event()
+        invalid["readings"]["humidity_pct"] = 101
+
+        with self.assertRaisesRegex(RuntimeError, "DLQ broker unavailable"):
+            processor.process_message(raw_message(invalid, offset=110))
+
+        self.assertEqual(producer.committed, [])
+        self.assertEqual(len(producer.aborted), 1)
+        self.assertFalse(any(call[0] == "send_offsets" for call in producer.calls))
+
+    def test_future_retry_is_paused_until_due_without_losing_its_offset(self):
+        event = sample_event()
+        future = time.time() + 60
+        future_timestamp = utc_timestamp(
+            datetime.fromtimestamp(future, timezone.utc)
+        )
+        retry = RetryEnvelope(
+            event_id=event["event_id"],
+            source_topic="sensor-events",
+            source_partition=0,
+            source_offset=120,
+            source_key=event["event_id"].encode(),
+            raw_payload=json.dumps(event, separators=(",", ":")).encode(),
+            attempt_number=1,
+            first_failure_at=future_timestamp,
+            last_failure_at=future_timestamp,
+            failure_reason="temporary failure",
+            next_attempt_at=future_timestamp,
+        )
+        processor, producer, consumer, _, _ = make_processor(
+            config=self.retry_config()
+        )
+        message = FakeMessage(
+            DEFAULT_RETRY_TOPIC,
+            0,
+            130,
+            retry.to_bytes(),
+            event["event_id"].encode(),
+        )
+        consumer.messages.append(message)
+
+        with patch("atmo_sync.processor.time.time", return_value=future - 1):
+            outcome = processor.process_one(timeout=0.01)
+        self.assertIsNone(outcome)
+        self.assertEqual(len(consumer.paused), 1)
+        self.assertEqual(producer.committed, [])
+
+        with patch("atmo_sync.processor.time.time", return_value=future + 1):
+            outcome = processor.process_one(timeout=0.01)
+
+        self.assertEqual(outcome, ProcessingOutcome.VALIDATED)
+        self.assertEqual(len(consumer.resumed), 1)
+        self.assertEqual(
+            producer.committed[0]["offsets"][0].offset,
+            131,
+        )
 
 
 if __name__ == "__main__":

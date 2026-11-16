@@ -9,6 +9,7 @@ import os
 import time
 import unittest
 import uuid
+from unittest.mock import patch
 
 from confluent_kafka import Consumer, KafkaError, Producer, TopicPartition
 
@@ -24,6 +25,7 @@ from atmo_sync.processor import (
     ProcessingOutcome,
     TransactionalValidationProcessor,
 )
+from atmo_sync.retry import DEFAULT_RETRY_TOPIC, TransientProcessingError
 from atmo_sync.simulator import SensorSimulator
 
 
@@ -393,6 +395,109 @@ class KafkaProcessorIntegrationTests(unittest.TestCase):
         ).encode("utf-8")
         self.assertEqual(actual_value, expected_value)
 
+    def test_retry_survives_processor_restart_and_is_published_once(self):
+        bootstrap = os.environ.get(
+            "ATMOSYNC_KAFKA_BOOTSTRAP_SERVERS", "localhost:9092"
+        )
+        group_id = f"atmosync-retry-restart-{uuid.uuid4()}"
+        config = ProcessorConfig(
+            bootstrap_servers=bootstrap,
+            group_id=group_id,
+            max_retry_attempts=2,
+            retry_base_delay_seconds=0.01,
+            retry_max_delay_seconds=0.05,
+            retry_jitter_fraction=0,
+            operation_timeout=10,
+            transaction_timeout=30,
+            ledger_restore_timeout=15,
+            poll_timeout=0.1,
+        )
+        event = SensorSimulator(seed=1904).generate_events(steps=1)[0]
+        event["event_id"] = str(uuid.uuid4())
+        raw = json.dumps(event, separators=(",", ":")).encode("utf-8")
+        validated_starts = self._current_high_offsets(
+            bootstrap, DEFAULT_VALIDATED_TOPIC, 6
+        )
+        retry_starts = self._current_high_offsets(
+            bootstrap, DEFAULT_RETRY_TOPIC, 1
+        )
+        starting_offset = self._seed_group_at_current_end(bootstrap, group_id)
+
+        producer = Producer({"bootstrap.servers": bootstrap})
+        try:
+            producer.produce(
+                DEFAULT_INPUT_TOPIC,
+                key=event["event_id"].encode("utf-8"),
+                value=raw,
+            )
+            self.assertEqual(producer.flush(15), 0)
+        finally:
+            producer.flush(15)
+
+        target_offset = self._high_watermark(bootstrap, DEFAULT_INPUT_TOPIC)
+        self.assertGreater(target_offset, starting_offset)
+        first_processor = TransactionalValidationProcessor(config)
+        attempts = 0
+        original_validation = first_processor._validate_for_processing
+
+        def fail_once(value):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise TransientProcessingError("injected transient integration failure")
+            original_validation(value)
+
+        try:
+            first_processor.initialize()
+            with patch.object(
+                first_processor, "_validate_for_processing", side_effect=fail_once
+            ):
+                first_outcome = first_processor.process_one(timeout=10)
+            self.assertEqual(first_outcome, ProcessingOutcome.RETRY_SCHEDULED)
+            committed = first_processor.consumer.committed(
+                [TopicPartition(DEFAULT_INPUT_TOPIC, 0)], timeout=5
+            )[0]
+            self.assertGreaterEqual(committed.offset, target_offset)
+        finally:
+            first_processor.close()
+
+        restarted = TransactionalValidationProcessor(config)
+        outcomes = []
+        try:
+            restarted.initialize()
+            deadline = time.monotonic() + 15
+            while time.monotonic() < deadline:
+                outcome = restarted.process_one(timeout=0.1)
+                if outcome is not None:
+                    outcomes.append(outcome)
+                if ProcessingOutcome.VALIDATED in outcomes:
+                    break
+            self.assertIn(ProcessingOutcome.VALIDATED, outcomes)
+        finally:
+            restarted.close()
+
+        retry_records = self._read_topic(
+            bootstrap, DEFAULT_RETRY_TOPIC, 1, retry_starts
+        )
+        matching_retries = [
+            record for record in retry_records if record.get("event_id") == event["event_id"]
+        ]
+        self.assertEqual(len(matching_retries), 1)
+        self.assertEqual(matching_retries[0]["attempt_number"], 1)
+        self.assertEqual(
+            base64.b64decode(matching_retries[0]["raw_payload_base64"]),
+            raw,
+        )
+        validated_records = self._read_topic(
+            bootstrap, DEFAULT_VALIDATED_TOPIC, 6, validated_starts
+        )
+        matching_validated = [
+            record
+            for record in validated_records
+            if record.get("event_id") == event["event_id"]
+        ]
+        self.assertEqual(matching_validated, [event])
+
     def _seed_group_at_current_end(self, bootstrap: str, group_id: str) -> int:
         consumer = Consumer(
             {
@@ -406,9 +511,16 @@ class KafkaProcessorIntegrationTests(unittest.TestCase):
             _, end_offset = consumer.get_watermark_offsets(
                 TopicPartition(DEFAULT_INPUT_TOPIC, 0), timeout=10
             )
-            consumer.assign([TopicPartition(DEFAULT_INPUT_TOPIC, 0, end_offset)])
+            _, retry_end = consumer.get_watermark_offsets(
+                TopicPartition(DEFAULT_RETRY_TOPIC, 0), timeout=10
+            )
+            group_offsets = [
+                TopicPartition(DEFAULT_INPUT_TOPIC, 0, end_offset),
+                TopicPartition(DEFAULT_RETRY_TOPIC, 0, retry_end),
+            ]
+            consumer.assign(group_offsets)
             consumer.commit(
-                offsets=[TopicPartition(DEFAULT_INPUT_TOPIC, 0, end_offset)],
+                offsets=group_offsets,
                 asynchronous=False,
             )
             return end_offset

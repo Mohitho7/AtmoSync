@@ -42,12 +42,15 @@ silently changed.
 | `sensor-events` | 1 | 1 | `delete` | 1 MiB |
 | `sensor-events-validated` | 6 | 1 | `delete` | 1 MiB |
 | `sensor-events-dlq` | 3 | 1 | `delete` | 6 MiB record |
+| `sensor-events-retry` | 1 | 1 | `delete` | 4 MiB record |
 | `sensor-event-dedup` | 1 | 1 | `compact` | 1 MiB |
 
 The DE-04C processor caps serialized DLQ JSON envelopes at 4 MiB. The 6 MiB
 Kafka record limit leaves room for message keys and Kafka record framing.
-The compacted ledger topic is infrastructure only in DE-04A; event-ID
-deduplication is implemented in DE-04C.
+The retry topic was added for DE-04D and stores bounded retry envelopes; it
+is not retry-processing logic provided by DE-04A. The compacted ledger topic
+is infrastructure only in DE-04A; event-ID deduplication is implemented in
+DE-04C.
 
 ## Requirements
 
@@ -70,11 +73,13 @@ Verified on Windows with Docker Engine **29.9.3**, Docker Compose
 - `docker compose config -q` completed successfully.
 - Kafka started successfully, and its broker API health check reported
   `healthy`.
-- The topic initializer completed successfully and verified all four topics:
+- The original DE-04A topic verification covered the four base topics:
   `sensor-events` (1 partition, `delete`), `sensor-events-validated`
   (6 partitions, `delete`), `sensor-events-dlq` (3 partitions, `delete`, 6 MiB
   record limit), and `sensor-event-dedup` (1 partition, `compact`). Each topic
-  had replication factor 1.
+  had replication factor 1. DE-04D later added `sensor-events-retry`; the
+  current initializer includes it with one partition, `delete` cleanup, and a
+  4 MiB record limit.
 - A valid test event was produced, Kafka was stopped and started, and the
   event was read back from `sensor-events` after restart.
 - The topic initializer script was normalized to LF line endings after a
@@ -163,8 +168,9 @@ Topic creation is idempotent for correctly configured existing topics.
 Kafka does not change a topic's partition count through `--if-not-exists`;
 the initializer detects incompatible existing partition counts and cleanup
 policies and reports an error for an operator to resolve. It sets
-`max.message.bytes` on all four topics idempotently, including an explicit
-6 MiB limit on `sensor-events-dlq` and a 1 MiB limit on the raw topic.
+`max.message.bytes` on all five current topics idempotently, including an
+explicit 6 MiB limit on `sensor-events-dlq`, a 4 MiB limit on
+`sensor-events-retry`, and a 1 MiB limit on the raw topic.
 
 The named volume protects broker log data across container recreation while
 the volume is retained. It is not a backup. Removing the volume destroys the

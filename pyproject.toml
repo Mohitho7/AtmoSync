@@ -16,6 +16,9 @@ dependencies = ["confluent-kafka>=2.6,<3.0"]
 [project.scripts]
 atmosync-producer = "atmo_sync.producer:main"
 atmosync-processor = "atmo_sync.processor:main"
+atmosync-validated-consumer = "atmo_sync.consumers.validated:main"
+atmosync-analytics-consumer = "atmo_sync.consumers.analytics:main"
+atmosync-monitoring-consumer = "atmo_sync.consumers.monitoring:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

@@ -69,6 +69,10 @@ My responsibility is to build the data ingestion pipeline, beginning with simula
 | DE-04A | Kafka infrastructure (Docker Compose/KRaft) | Completed; runtime verified |
 | DE-04B | Python producer integration with the existing sensor simulator | Completed; Kafka delivery verified |
 | DE-04C | Transactional validation and event-ID deduplication | Completed; Kafka integration verified |
+| DE-04D | Retry handling and Dead Letter Queue processing | Implemented and verified by unit and live Kafka tests |
+| DE-04E | Downstream consumer groups and independent processing pipelines | Implemented and verified by unit tests and live Kafka integration |
+| DE-04F | Reliability and performance testing | Local test and measurement coverage present; not production certification |
+| DE-04G | Architecture documentation and final audit | Documentation present; remaining validation limitations recorded |
 
 ### Phase 3 — Data Transformation and Analytics
 
@@ -137,8 +141,10 @@ The virtual environment is excluded from version control.
 
 ## 7. Current Development Status
 
-**Latest completed milestone:** DE-04C transactional validation and event-ID
-deduplication; unit tests and local broker integration verified on `MOHITH`.
+**Latest completed implementation milestone:** DE-04E downstream consumer
+groups, built on DE-04D retry/DLQ processing. DE-04F local reliability tests
+and DE-04G documentation are present, with validation limitations explicitly
+noted in the milestone reports.
 
 | Area | Current status |
 |---|---|
@@ -148,26 +154,31 @@ deduplication; unit tests and local broker integration verified on `MOHITH`.
 | DE-04A Kafka infrastructure | Completed; Docker/Kafka runtime verified |
 | DE-04B Python producer integration | Completed; unit and Kafka integration tests passed |
 | DE-04C transactional validation and deduplication | Completed; unit and Kafka integration tests passed |
+| DE-04D retry and DLQ handling | Implemented; unit and live Kafka integration coverage present |
+| DE-04E downstream consumers and consumer groups | Implemented; unit and live Kafka integration coverage present |
+| DE-04F performance and reliability testing | Local tests and actual small-workload measurements documented; incomplete as production-style validation |
+| DE-04G architecture and verification documentation | Complete documentation set present; limitations and evidence recorded |
 | Project structure | Created |
 | Git initialization | Completed |
-| GitHub branch synchronization | MOHITH branch synchronized through DE-04A |
+| GitHub branch synchronization | MOHITH branch synchronized through the active working tree |
 
-DE-04A verification confirmed Docker Engine and Compose, Kafka 3.9.1 broker
-health, all four topic configurations, and a test message surviving a
-container stop/start. DE-04B's producer was verified against the local
-`sensor-events` topic. DE-04C's integration test verified transactional
-validation and DLQ routing, then restarted the processor and confirmed
-duplicate suppression from the restored ledger. See the [DE-04A verification
-record](docs/de-04-kafka-infrastructure.md#verification-record),
-[DE-04B producer documentation](docs/de-04b-kafka-producer.md), and
-[DE-04C processor documentation](docs/de-04c-transactional-validation-deduplication.md).
+The DE-04 documentation set includes infrastructure, producer, transactional
+processor, retry/DLQ, downstream consumers, testing/performance, and final
+audit reports. The audit does not claim production certification: the
+broker is single-node, consumer side effects are process-local, and
+performance/group-rebalance evidence has stated limits. See the [DE-04
+documentation index](#de-04-documentation).
 
 ## 8. Upcoming Priorities
 
-**Next milestone:** DE-04D — retry-topic and DLQ handling.
+**Next priorities:** Expand multi-broker fault testing and sustained
+benchmark methodology before making stronger reliability or
+production-readiness claims.
 
-Advanced retry processing and DLQ consumption, Snowflake integration, dbt
-models, and dashboards are not implemented in this work.
+Bounded retry handling and DLQ routing are implemented and tested. A
+dedicated DLQ consumer, remediation, or replay application is not implemented.
+Broader Snowflake, dbt, and dashboard work remains outside the scope of the
+current code and documentation in this branch.
 
 ## 9. Local Development Setup
 
@@ -202,8 +213,19 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 - **Repository:** [AtmoSync](https://github.com/Mohitho7/AtmoSync)
 - **Development branch:** `MOHITH`
 - **Workstream:** Data Engineering
-- **Latest completed milestone:** DE-04C — transactional validation and event-ID deduplication
+- **Latest implemented milestone:** DE-04E — downstream consumer groups
 
 ---
 
 *This README tracks the implementation progress of the AtmoSync Data Engineering workstream in the `MOHITH` branch. Task statuses should be updated as work is implemented, tested, and committed.*
+
+## DE-04 Documentation
+
+- [DE-04A — Kafka infrastructure](docs/de-04-kafka-infrastructure.md)
+- [DE-04B — Kafka producer](docs/de-04b-kafka-producer.md)
+- [DE-04C — Transactional validation and deduplication](docs/de-04c-transactional-validation-deduplication.md)
+- [DE-04D — Retry and DLQ](docs/de-04d-retry-and-dlq.md)
+- [DE-04E — Independent consumers](docs/de-04e-independent-consumers.md)
+- [DE-04F — Testing and performance](docs/de-04f-testing-and-performance.md)
+- [DE-04G — Final architecture and audit](docs/de-04g-final-audit.md)
+- [DE-04 reliability investigation](docs/de-04-reliability-investigation.md)

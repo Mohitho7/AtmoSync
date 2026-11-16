@@ -14,6 +14,7 @@ import sys
 import time
 import uuid
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any, Callable
 
@@ -21,6 +22,14 @@ from confluent_kafka import Consumer, KafkaError, KafkaException, Producer, Topi
 from confluent_kafka.admin import AdminClient, ConfigResource, ResourceType
 
 from .contracts import validate_sensor_event
+from .retry import (
+    DEFAULT_RETRY_TOPIC,
+    MAX_RETRY_KAFKA_RECORD_BYTES,
+    RetryEnvelope,
+    RetryPolicy,
+    TransientProcessingError,
+    utc_timestamp,
+)
 
 DEFAULT_BOOTSTRAP_SERVERS = "localhost:9092"
 DEFAULT_INPUT_TOPIC = "sensor-events"
@@ -56,6 +65,8 @@ class ProcessingOutcome(str, Enum):
     CONFLICT = "conflict"
     INVALID = "invalid"
     MALFORMED = "malformed"
+    RETRY_SCHEDULED = "retry_scheduled"
+    RETRY_EXHAUSTED = "retry_exhausted"
 
 
 @dataclass(frozen=True)
@@ -65,7 +76,12 @@ class ProcessorConfig:
     validated_topic: str = DEFAULT_VALIDATED_TOPIC
     dlq_topic: str = DEFAULT_DLQ_TOPIC
     dedup_topic: str = DEFAULT_DEDUP_TOPIC
+    retry_topic: str = DEFAULT_RETRY_TOPIC
     group_id: str = DEFAULT_GROUP_ID
+    max_retry_attempts: int = 3
+    retry_base_delay_seconds: float = 1.0
+    retry_max_delay_seconds: float = 30.0
+    retry_jitter_fraction: float = 0.2
     operation_timeout: float = DEFAULT_OPERATION_TIMEOUT
     transaction_timeout: float = DEFAULT_TRANSACTION_TIMEOUT
     ledger_restore_timeout: float = DEFAULT_LEDGER_RESTORE_TIMEOUT
@@ -78,6 +94,7 @@ class ProcessorConfig:
             "validated_topic",
             "dlq_topic",
             "dedup_topic",
+            "retry_topic",
             "group_id",
         ):
             value = getattr(self, field_name)
@@ -88,9 +105,18 @@ class ProcessorConfig:
             self.validated_topic,
             self.dlq_topic,
             self.dedup_topic,
+            self.retry_topic,
         )
         if len(set(topic_names)) != len(topic_names):
-            raise ValueError("input, output, DLQ, and dedup topics must be distinct")
+            raise ValueError(
+                "input, validated, DLQ, dedup, and retry topics must be distinct"
+            )
+        RetryPolicy(
+            max_attempts=self.max_retry_attempts,
+            base_delay_seconds=self.retry_base_delay_seconds,
+            max_delay_seconds=self.retry_max_delay_seconds,
+            jitter_fraction=self.retry_jitter_fraction,
+        )
         for field_name in (
             "operation_timeout",
             "transaction_timeout",
@@ -252,6 +278,22 @@ def _json_bytes(value: Any) -> bytes:
     ).encode("utf-8")
 
 
+def _validate_json_depth(value: Any, maximum: int = 1000) -> None:
+    stack = [(value, 0)]
+    while stack:
+        current, depth = stack.pop()
+        if isinstance(current, dict):
+            children = current.values()
+        elif isinstance(current, list):
+            children = current
+        else:
+            continue
+        child_depth = depth + 1
+        if child_depth > maximum and len(children) > 0:
+            raise ValueError(f"JSON nesting exceeds maximum depth of {maximum}")
+        stack.extend((child, child_depth) for child in children)
+
+
 def _event_id(event: Any) -> str | None:
     if isinstance(event, dict):
         value = event.get("event_id")
@@ -296,8 +338,8 @@ class TransactionalValidationProcessor:
             "enable.auto.offset.store": False,
             "auto.offset.reset": "earliest",
             "isolation.level": "read_committed",
-            "max.partition.fetch.bytes": 2 * MAX_RAW_MESSAGE_BYTES,
-            "fetch.max.bytes": 2 * MAX_RAW_MESSAGE_BYTES,
+            "max.partition.fetch.bytes": 2 * MAX_RETRY_KAFKA_RECORD_BYTES,
+            "fetch.max.bytes": 2 * MAX_RETRY_KAFKA_RECORD_BYTES,
         }
         self.producer = (
             Producer(producer_config)
@@ -323,6 +365,13 @@ class TransactionalValidationProcessor:
         self._transaction_open = False
         self._commit_outcome_uncertain = False
         self._closed = False
+        self._deferred_retry: tuple[Any, RetryEnvelope] | None = None
+        self._retry_policy = RetryPolicy(
+            max_attempts=self.config.max_retry_attempts,
+            base_delay_seconds=self.config.retry_base_delay_seconds,
+            max_delay_seconds=self.config.retry_max_delay_seconds,
+            jitter_fraction=self.config.retry_jitter_fraction,
+        )
 
     def _verify_topics(self) -> None:
         metadata = self.consumer.list_topics(timeout=self.config.operation_timeout)
@@ -331,6 +380,7 @@ class TransactionalValidationProcessor:
             self.config.validated_topic: 6,
             self.config.dlq_topic: 3,
             self.config.dedup_topic: 1,
+            self.config.retry_topic: 1,
         }
         for topic, partition_count in expected.items():
             topic_metadata = metadata.topics.get(topic)
@@ -351,6 +401,7 @@ class TransactionalValidationProcessor:
             self.config.input_topic,
             self.config.dlq_topic,
             self.config.dedup_topic,
+            self.config.retry_topic,
         )
         resources = {
             topic: ConfigResource(ResourceType.TOPIC, topic)
@@ -381,6 +432,9 @@ class TransactionalValidationProcessor:
             dlq_max_bytes = int(
                 config_value(self.config.dlq_topic, "max.message.bytes")
             )
+            retry_max_bytes = int(
+                config_value(self.config.retry_topic, "max.message.bytes")
+            )
         except (TypeError, ValueError) as error:
             raise ProcessorError(f"invalid Kafka message-size configuration: {error}") from error
         if raw_max_bytes > MAX_RAW_MESSAGE_BYTES:
@@ -394,6 +448,12 @@ class TransactionalValidationProcessor:
                 f"{dlq_max_bytes}; expected at least "
                 f"{MAX_DLQ_KAFKA_RECORD_BYTES}"
             )
+        if retry_max_bytes < MAX_RETRY_KAFKA_RECORD_BYTES:
+            raise ProcessorError(
+                f"topic {self.config.retry_topic} max.message.bytes is "
+                f"{retry_max_bytes}; expected at least "
+                f"{MAX_RETRY_KAFKA_RECORD_BYTES}"
+            )
 
         cleanup_policy = config_value(self.config.dedup_topic, "cleanup.policy")
         if "compact" not in {
@@ -402,9 +462,19 @@ class TransactionalValidationProcessor:
             raise ProcessorError(
                 f"topic {self.config.dedup_topic} cleanup.policy must include compact"
             )
+        retry_cleanup_policy = config_value(
+            self.config.retry_topic, "cleanup.policy"
+        )
+        retry_policies = {
+            policy.strip() for policy in retry_cleanup_policy.split(",")
+        }
+        if "delete" not in retry_policies or "compact" in retry_policies:
+            raise ProcessorError(
+                f"topic {self.config.retry_topic} cleanup.policy must be delete-only"
+            )
 
     def initialize(self) -> None:
-        """Initialize transactions, restore ledger, then subscribe to raw input."""
+        """Initialize transactions, restore the ledger, and subscribe to work topics."""
         if self._initialized:
             return
         if self._closed:
@@ -419,7 +489,7 @@ class TransactionalValidationProcessor:
             topic=self.config.dedup_topic,
             timeout=self.config.ledger_restore_timeout,
         )
-        self.consumer.subscribe([self.config.input_topic])
+        self.consumer.subscribe([self.config.input_topic, self.config.retry_topic])
         self._initialized = True
         LOGGER.info(
             "Initialized transactional processor; restored %d ledger entries",
@@ -526,14 +596,27 @@ class TransactionalValidationProcessor:
         raw_value: bytes | None,
         parsed_event: Any = _UNPARSED,
         *,
+        source_context: RetryEnvelope | None = None,
+        retry_metadata: dict[str, Any] | None = None,
         extra: dict[str, Any] | None = None,
     ) -> list[tuple[str, bytes | None, bytes]]:
+        source_topic = (
+            message.topic() if source_context is None else source_context.source_topic
+        )
+        source_partition = (
+            message.partition()
+            if source_context is None
+            else source_context.source_partition
+        )
+        source_offset = (
+            message.offset() if source_context is None else source_context.source_offset
+        )
         envelope: dict[str, Any] = {
             "error_code": error_code,
             "error_message": error_message,
-            "source_topic": message.topic(),
-            "source_partition": message.partition(),
-            "source_offset": message.offset(),
+            "source_topic": source_topic,
+            "source_partition": source_partition,
+            "source_offset": source_offset,
             "raw_payload_base64": (
                 None
                 if raw_value is None
@@ -542,10 +625,17 @@ class TransactionalValidationProcessor:
         }
         if parsed_event is not _UNPARSED:
             envelope["original_event"] = parsed_event
+        if retry_metadata is not None:
+            envelope["retry_metadata"] = retry_metadata
         if extra:
             envelope.update(extra)
         event_id = _event_id(parsed_event)
-        key = event_id.encode("utf-8") if event_id is not None else message.key()
+        if event_id is not None:
+            key = event_id.encode("utf-8")
+        elif source_context is not None:
+            key = source_context.source_key
+        else:
+            key = message.key()
         encoded_envelope = _json_bytes(envelope)
         if len(encoded_envelope) > MAX_DLQ_MESSAGE_BYTES:
             raise ProcessorError(
@@ -554,12 +644,279 @@ class TransactionalValidationProcessor:
             )
         return [(self.config.dlq_topic, key, encoded_envelope)]
 
+    def _retry_metadata(
+        self,
+        error: Exception,
+        failure_class: str,
+        source_context: RetryEnvelope | None,
+        *,
+        attempt_number: int,
+        first_failure_at: str | None = None,
+        retry_delay_seconds: float | None = None,
+        next_attempt_at: str | None = None,
+    ) -> dict[str, Any]:
+        now = utc_timestamp()
+        return {
+            "attempt_number": attempt_number,
+            "max_retry_attempts": self.config.max_retry_attempts,
+            "failure_class": failure_class,
+            "first_failure_at": (
+                source_context.first_failure_at
+                if source_context is not None
+                else (first_failure_at or now)
+            ),
+            "last_failure_at": now,
+            "failure_reason": str(error),
+            "attempt_history": self._attempt_history(
+                error,
+                source_context,
+                attempt_number,
+                failed_at=now,
+                retry_delay_seconds=retry_delay_seconds,
+                next_attempt_at=next_attempt_at,
+            ),
+        }
+
+    @staticmethod
+    def _attempt_history(
+        error: Exception,
+        source_context: RetryEnvelope | None,
+        attempt_number: int,
+        *,
+        failed_at: str,
+        retry_delay_seconds: float | None = None,
+        next_attempt_at: str | None = None,
+    ) -> tuple[dict[str, Any], ...]:
+        history = (
+            []
+            if source_context is None
+            else [dict(entry) for entry in source_context.retry_history]
+        )
+        history.append(
+            {
+                "attempt_number": attempt_number,
+                "failed_at": failed_at,
+                "failure_reason": str(error),
+                "retry_delay_seconds": retry_delay_seconds,
+                "next_attempt_at": next_attempt_at,
+            }
+        )
+        return tuple(history)
+
+    def _commit_dlq(
+        self,
+        message: Any,
+        error_code: str,
+        error_message: str,
+        raw_value: bytes | None,
+        parsed_event: Any = _UNPARSED,
+        *,
+        source_context: RetryEnvelope | None = None,
+        retry_metadata: dict[str, Any] | None = None,
+        extra: dict[str, Any] | None = None,
+    ) -> None:
+        outputs = self._dlq_output(
+            message,
+            error_code,
+            error_message,
+            raw_value,
+            parsed_event,
+            source_context=source_context,
+            retry_metadata=retry_metadata,
+            extra=extra,
+        )
+        self._commit_input(message, outputs)
+        LOGGER.warning(
+            "dlq_routed",
+            extra={
+                "error_code": error_code,
+                "source_topic": (
+                    message.topic()
+                    if source_context is None
+                    else source_context.source_topic
+                ),
+                "source_partition": (
+                    message.partition()
+                    if source_context is None
+                    else source_context.source_partition
+                ),
+                "source_offset": (
+                    message.offset()
+                    if source_context is None
+                    else source_context.source_offset
+                ),
+                "event_id": _event_id(parsed_event),
+                "attempt_number": (
+                    0
+                    if retry_metadata is None
+                    else retry_metadata.get("attempt_number", 0)
+                ),
+            },
+        )
+
+    def _validate_for_processing(self, event: dict[str, Any]) -> None:
+        validate_sensor_event(event)
+
+    def _handle_transient_failure(
+        self,
+        message: Any,
+        raw_value: bytes,
+        event: dict[str, Any],
+        source_context: RetryEnvelope | None,
+        error: TransientProcessingError,
+    ) -> ProcessingOutcome:
+        current_attempt = (
+            0 if source_context is None else source_context.attempt_number
+        )
+        first_failure_at = (
+            utc_timestamp()
+            if source_context is None
+            else source_context.first_failure_at
+        )
+        if current_attempt >= self.config.max_retry_attempts:
+            metadata = self._retry_metadata(
+                error,
+                "transient_exhausted",
+                source_context,
+                attempt_number=current_attempt,
+                first_failure_at=first_failure_at,
+            )
+            self._commit_dlq(
+                message,
+                "RETRY_EXHAUSTED",
+                str(error),
+                raw_value,
+                event,
+                source_context=source_context,
+                retry_metadata=metadata,
+            )
+            return ProcessingOutcome.RETRY_EXHAUSTED
+
+        next_attempt = current_attempt + 1
+        delay = self._retry_policy.delay_for_attempt(next_attempt)
+        now = datetime.now(timezone.utc)
+        next_attempt_at = utc_timestamp(now + timedelta(seconds=delay))
+        failed_at = utc_timestamp(now)
+        retry = RetryEnvelope(
+            event_id=_event_id(event),
+            source_topic=(
+                message.topic()
+                if source_context is None
+                else source_context.source_topic
+            ),
+            source_partition=(
+                message.partition()
+                if source_context is None
+                else source_context.source_partition
+            ),
+            source_offset=(
+                message.offset()
+                if source_context is None
+                else source_context.source_offset
+            ),
+            source_key=message.key() if source_context is None else source_context.source_key,
+            raw_payload=raw_value,
+            attempt_number=next_attempt,
+            first_failure_at=first_failure_at,
+            last_failure_at=failed_at,
+            failure_reason=str(error),
+            next_attempt_at=next_attempt_at,
+            retry_history=self._attempt_history(
+                error,
+                source_context,
+                current_attempt,
+                failed_at=failed_at,
+                retry_delay_seconds=delay,
+                next_attempt_at=next_attempt_at,
+            ),
+        )
+        encoded_retry = retry.to_bytes()
+        if len(encoded_retry) > MAX_RETRY_KAFKA_RECORD_BYTES:
+            metadata = self._retry_metadata(
+                error,
+                "transient_retry_envelope_too_large",
+                source_context,
+                attempt_number=current_attempt,
+                first_failure_at=first_failure_at,
+            )
+            self._commit_dlq(
+                message,
+                "RETRY_ENVELOPE_TOO_LARGE",
+                "serialized retry record exceeds the configured Kafka record limit",
+                raw_value,
+                event,
+                source_context=source_context,
+                retry_metadata=metadata,
+            )
+            return ProcessingOutcome.RETRY_EXHAUSTED
+
+        event_key = (
+            retry.event_id.encode("utf-8")
+            if retry.event_id is not None
+            else retry.source_key
+        )
+        self._commit_input(
+            message,
+            [(self.config.retry_topic, event_key, encoded_retry)],
+        )
+        LOGGER.warning(
+            "retry_scheduled",
+            extra={
+                "event_id": retry.event_id,
+                "source_topic": retry.source_topic,
+                "source_partition": retry.source_partition,
+                "source_offset": retry.source_offset,
+                "attempt_number": retry.attempt_number,
+                "max_retry_attempts": self.config.max_retry_attempts,
+                "delay_seconds": delay,
+                "next_attempt_at": retry.next_attempt_at,
+                "failure_reason": retry.failure_reason,
+            },
+        )
+        return ProcessingOutcome.RETRY_SCHEDULED
+
     def process_message(self, message: Any) -> ProcessingOutcome:
         """Process one consumed record in a Kafka transaction."""
         if not self._initialized:
             raise ProcessorError("processor must be initialized before processing")
 
+        source_context: RetryEnvelope | None = None
         raw_value = message.value()
+        if message.topic() == self.config.retry_topic:
+            try:
+                if raw_value is None:
+                    raise ValueError("retry record value is null")
+                source_context = RetryEnvelope.from_bytes(raw_value)
+                if source_context.attempt_number > self.config.max_retry_attempts:
+                    raise ValueError(
+                        "retry record attempt_number exceeds max_retry_attempts"
+                    )
+            except (ValueError, RecursionError) as error:
+                self._commit_dlq(
+                    message,
+                    "INVALID_RETRY_ENVELOPE",
+                    str(error),
+                    raw_value,
+                    retry_metadata={
+                        "attempt_number": 0,
+                        "max_retry_attempts": self.config.max_retry_attempts,
+                        "failure_class": "permanent",
+                        "first_failure_at": utc_timestamp(),
+                        "last_failure_at": utc_timestamp(),
+                        "failure_reason": str(error),
+                    },
+                )
+                return ProcessingOutcome.MALFORMED
+            raw_value = source_context.raw_payload
+
+        return self._process_payload(message, raw_value, source_context)
+
+    def _process_payload(
+        self,
+        message: Any,
+        raw_value: bytes | None,
+        source_context: RetryEnvelope | None,
+    ) -> ProcessingOutcome:
         try:
             if raw_value is None:
                 raise ValueError("record value is null")
@@ -567,6 +924,7 @@ class TransactionalValidationProcessor:
                 raw_value.decode("utf-8"),
                 parse_constant=_parse_constant,
             )
+            _validate_json_depth(event)
             _json_bytes(event)
         except (
             UnicodeDecodeError,
@@ -574,37 +932,69 @@ class TransactionalValidationProcessor:
             ValueError,
             RecursionError,
         ) as error:
-            outputs = self._dlq_output(
+            self._commit_dlq(
                 message,
                 "MALFORMED_JSON",
                 str(error),
                 raw_value,
+                source_context=source_context,
+                retry_metadata=self._retry_metadata(
+                    error,
+                    "permanent",
+                    source_context,
+                    attempt_number=(
+                        0 if source_context is None else source_context.attempt_number
+                    ),
+                ),
             )
-            self._commit_input(message, outputs)
             return ProcessingOutcome.MALFORMED
 
         if not isinstance(event, dict):
-            outputs = self._dlq_output(
+            self._commit_dlq(
                 message,
                 "JSON_OBJECT_REQUIRED",
                 "sensor event JSON must be a JSON object",
                 raw_value,
                 event,
+                source_context=source_context,
+                retry_metadata=self._retry_metadata(
+                    ValueError("sensor event JSON must be a JSON object"),
+                    "permanent",
+                    source_context,
+                    attempt_number=(
+                        0 if source_context is None else source_context.attempt_number
+                    ),
+                ),
             )
-            self._commit_input(message, outputs)
             return ProcessingOutcome.INVALID
 
         try:
-            validate_sensor_event(event)
+            self._validate_for_processing(event)
+        except TransientProcessingError as error:
+            return self._handle_transient_failure(
+                message,
+                raw_value if raw_value is not None else b"",
+                event,
+                source_context,
+                error,
+            )
         except ValueError as error:
-            outputs = self._dlq_output(
+            self._commit_dlq(
                 message,
                 "INVALID_SENSOR_EVENT",
                 str(error),
                 raw_value,
                 event,
+                source_context=source_context,
+                retry_metadata=self._retry_metadata(
+                    error,
+                    "permanent",
+                    source_context,
+                    attempt_number=(
+                        0 if source_context is None else source_context.attempt_number
+                    ),
+                ),
             )
-            self._commit_input(message, outputs)
             return ProcessingOutcome.INVALID
 
         event_id = _canonical_event_id(event["event_id"])
@@ -615,18 +1005,29 @@ class TransactionalValidationProcessor:
             LOGGER.info("Suppressed duplicate sensor event %s", event_id)
             return ProcessingOutcome.DUPLICATE
         if known_hash is not None:
-            outputs = self._dlq_output(
+            conflict = ValueError(
+                "event_id was previously committed with a different payload"
+            )
+            self._commit_dlq(
                 message,
                 "EVENT_ID_PAYLOAD_CONFLICT",
-                "event_id was previously committed with a different payload",
+                str(conflict),
                 raw_value,
                 event,
+                source_context=source_context,
+                retry_metadata=self._retry_metadata(
+                    conflict,
+                    "permanent",
+                    source_context,
+                    attempt_number=(
+                        0 if source_context is None else source_context.attempt_number
+                    ),
+                ),
                 extra={
                     "existing_payload_sha256": known_hash,
                     "incoming_payload_sha256": event_hash,
                 },
             )
-            self._commit_input(message, outputs)
             return ProcessingOutcome.CONFLICT
 
         validated_value = _json_bytes(event)
@@ -661,6 +1062,19 @@ class TransactionalValidationProcessor:
             if timeout is None
             else _positive_timeout(timeout, "poll_timeout")
         )
+        if self._deferred_retry is not None:
+            retry_message, retry_context = self._deferred_retry
+            if time.time() >= retry_context.next_attempt_epoch:
+                self.consumer.resume(
+                    [
+                        TopicPartition(
+                            self.config.retry_topic, retry_message.partition()
+                        )
+                    ]
+                )
+                self._deferred_retry = None
+                return self.process_message(retry_message)
+
         message = self.consumer.poll(poll_timeout)
         if message is None:
             return None
@@ -669,6 +1083,24 @@ class TransactionalValidationProcessor:
             if error.code() == KafkaError._PARTITION_EOF:
                 return None
             raise ProcessorError(f"Kafka input consumer error: {error}")
+        if message.topic() == self.config.retry_topic:
+            try:
+                value = message.value()
+                if value is None:
+                    raise ValueError("retry record value is null")
+                retry_context = RetryEnvelope.from_bytes(value)
+                if retry_context.attempt_number > self.config.max_retry_attempts:
+                    raise ValueError(
+                        "retry record attempt_number exceeds max_retry_attempts"
+                    )
+            except (ValueError, RecursionError):
+                return self.process_message(message)
+            if time.time() < retry_context.next_attempt_epoch:
+                self.consumer.pause(
+                    [TopicPartition(self.config.retry_topic, message.partition())]
+                )
+                self._deferred_retry = (message, retry_context)
+                return None
         return self.process_message(message)
 
     def run(self, max_messages: int | None = None) -> int:
@@ -755,6 +1187,30 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=os.environ.get("ATMOSYNC_KAFKA_DEDUP_TOPIC", DEFAULT_DEDUP_TOPIC),
     )
     parser.add_argument(
+        "--retry-topic",
+        default=os.environ.get("ATMOSYNC_KAFKA_RETRY_TOPIC", DEFAULT_RETRY_TOPIC),
+    )
+    parser.add_argument(
+        "--max-retry-attempts",
+        type=int,
+        default=os.environ.get("ATMOSYNC_MAX_RETRY_ATTEMPTS", "3"),
+    )
+    parser.add_argument(
+        "--retry-base-delay",
+        type=float,
+        default=os.environ.get("ATMOSYNC_RETRY_BASE_DELAY_SECONDS", "1.0"),
+    )
+    parser.add_argument(
+        "--retry-max-delay",
+        type=float,
+        default=os.environ.get("ATMOSYNC_RETRY_MAX_DELAY_SECONDS", "30.0"),
+    )
+    parser.add_argument(
+        "--retry-jitter",
+        type=float,
+        default=os.environ.get("ATMOSYNC_RETRY_JITTER_FRACTION", "0.2"),
+    )
+    parser.add_argument(
         "--group-id",
         default=os.environ.get("ATMOSYNC_KAFKA_GROUP_ID", DEFAULT_GROUP_ID),
     )
@@ -766,7 +1222,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             validated_topic=args.validated_topic,
             dlq_topic=args.dlq_topic,
             dedup_topic=args.dedup_topic,
+            retry_topic=args.retry_topic,
             group_id=args.group_id,
+            max_retry_attempts=args.max_retry_attempts,
+            retry_base_delay_seconds=args.retry_base_delay,
+            retry_max_delay_seconds=args.retry_max_delay,
+            retry_jitter_fraction=args.retry_jitter,
         )
     except ValueError as error:
         parser.error(str(error))
@@ -787,7 +1248,12 @@ def main(argv: list[str] | None = None) -> int:
         validated_topic=args.validated_topic,
         dlq_topic=args.dlq_topic,
         dedup_topic=args.dedup_topic,
+        retry_topic=args.retry_topic,
         group_id=args.group_id,
+        max_retry_attempts=args.max_retry_attempts,
+        retry_base_delay_seconds=args.retry_base_delay,
+        retry_max_delay_seconds=args.retry_max_delay,
+        retry_jitter_fraction=args.retry_jitter,
     )
     processor: TransactionalValidationProcessor | None = None
     exit_code = 0

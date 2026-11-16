@@ -8,6 +8,7 @@ topics=(
   "sensor-events:1:delete:1048588"
   "sensor-events-validated:6:delete:1048588"
   "sensor-events-dlq:3:delete:6291456"
+  "sensor-events-retry:1:delete:4194304"
   "sensor-event-dedup:1:compact:1048588"
 )
 

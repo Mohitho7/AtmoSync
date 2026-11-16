@@ -167,13 +167,18 @@ python -m pip check
 
 The live processor integration tests are opt-in. They publish unique synthetic
 records to the existing `sensor-events` topic, verify validated and DLQ
-outputs, restart the processor with the same IDs, and verify duplicate
-suppression from the restored ledger. They also verify a near-limit raw event
-and its Base64-preserving DLQ record through the processor, plus a full 4 MiB
-DLQ envelope published and read back using the configured 6 MiB Kafka record
-and fetch limits. They also verify that an aborted transaction is hidden from
-read-committed consumers. They leave test records in Kafka; they do not delete
-topics, records, or volumes.
+outputs, close one processor instance, create another in the same Python test
+process, and verify duplicate suppression from the restored ledger. They also
+verify a near-limit raw event and its Base64-preserving DLQ record through the
+processor, plus a full 4 MiB DLQ envelope published and read back using the
+configured 6 MiB Kafka record and fetch limits. They also verify that an
+aborted transaction is hidden from read-committed consumers. They leave test
+records in Kafka; they do not delete topics, records, or volumes.
+
+The instance-recreation test does not simulate an OS-level process crash or
+forced termination, and does not test a broker restart while the processor is
+unavailable. The separately gated broker-restart test verifies producer
+recovery only; it is not evidence of processor crash recovery.
 
 ```powershell
 $env:ATMOSYNC_RUN_KAFKA_INTEGRATION = "1"
@@ -197,6 +202,10 @@ available. Without the environment variable, the integration test is skipped.
 - Ledger recovery scans committed records from the compacted topic to its
   captured end offset; startup cost depends on retained ledger size and Kafka
   compaction state.
+- Actual process-crash recovery remains unverified. It requires a dedicated
+  process-level integration test that exercises forced processor termination
+  and recovery; the current in-process instance-recreation test is not a
+  substitute.
 - Kafka transactions atomically cover Kafka outputs, the deduplication
   marker, and the input offset for consumers configured with
   `isolation.level=read_committed`. They do not cover external systems.
