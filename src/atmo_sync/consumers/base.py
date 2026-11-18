@@ -86,17 +86,36 @@ class KafkaEventConsumer:
         self,
         config: ConsumerConfig,
         *,
-        event_handler: Callable[[dict[str, Any]], None],
+        event_handler: Callable[[dict[str, Any]], None] | None = None,
+        message_handler: Callable[[dict[str, Any], Any], None] | None = None,
         consumer_client: Any | None = None,
+        on_revoke: Callable[[Any, list[Any]], None] | None = None,
+        on_lost: Callable[[Any, list[Any]], None] | None = None,
+        suppress_recent_event_ids: bool = True,
     ) -> None:
+        if (event_handler is None) == (message_handler is None):
+            raise ValueError("provide exactly one of event_handler or message_handler")
         self.config = config
-        self._event_handler = event_handler
+        self._suppress_recent_event_ids = suppress_recent_event_ids
+        if message_handler is not None:
+            self._message_handler = message_handler
+        else:
+            assert event_handler is not None
+            self._message_handler = lambda event, _message: event_handler(event)
         self.consumer = (
             Consumer(config.kafka_config())
             if consumer_client is None
             else consumer_client
         )
-        self.consumer.subscribe([config.topic])
+        callbacks = {}
+        if on_revoke is not None:
+            callbacks["on_revoke"] = on_revoke
+        if on_lost is not None:
+            callbacks["on_lost"] = on_lost
+        if callbacks:
+            self.consumer.subscribe([config.topic], **callbacks)
+        else:
+            self.consumer.subscribe([config.topic])
         self._recent_event_ids: OrderedDict[str, None] = OrderedDict()
         self._closed = False
 
@@ -133,6 +152,14 @@ class KafkaEventConsumer:
         if len(self._recent_event_ids) > MAX_RECENT_EVENT_IDS:
             self._recent_event_ids.popitem(last=False)
 
+    def _on_message_received(self, message: Any) -> None:
+        """Hook for consumer-specific metrics."""
+
+    def _on_offset_committed(
+        self, event: dict[str, Any], message: Any, *, duplicate: bool
+    ) -> None:
+        """Hook called only after the synchronous offset commit succeeds."""
+
     @staticmethod
     def _raise_commit_errors(result: Any) -> None:
         if result is None:
@@ -157,9 +184,12 @@ class KafkaEventConsumer:
                 return None
             raise ConsumerError(f"Kafka event consumer error: {error}")
 
+        self._on_message_received(message)
         event = self._decode_event(message)
         event_id = event["event_id"]
-        duplicate = event_id in self._recent_event_ids
+        duplicate = (
+            self._suppress_recent_event_ids and event_id in self._recent_event_ids
+        )
         if duplicate:
             self._recent_event_ids.move_to_end(event_id)
             LOGGER.warning(
@@ -173,8 +203,9 @@ class KafkaEventConsumer:
                 },
             )
         else:
-            self._event_handler(event)
-            self._remember_event_id(event_id)
+            self._message_handler(event, message)
+            if self._suppress_recent_event_ids:
+                self._remember_event_id(event_id)
 
         try:
             result = self.consumer.commit(message=message, asynchronous=False)
@@ -184,6 +215,7 @@ class KafkaEventConsumer:
                 f"{message.partition()} offset {message.offset()}: {error}"
             ) from error
         self._raise_commit_errors(result)
+        self._on_offset_committed(event, message, duplicate=duplicate)
         LOGGER.info(
             "consumer_offset_committed",
             extra={

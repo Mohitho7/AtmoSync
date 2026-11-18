@@ -10,6 +10,7 @@ from typing import Type
 
 from confluent_kafka import KafkaException
 
+from ..config import load_environment
 from .base import (
     ConsumerConfig,
     ConsumerError,
@@ -29,6 +30,7 @@ def run_consumer_cli(
     description: str,
     argv: list[str] | None = None,
 ) -> int:
+    load_environment()
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",
@@ -38,7 +40,8 @@ def run_consumer_cli(
     parser.add_argument(
         "--bootstrap-servers",
         default=os.environ.get(
-            "ATMOSYNC_KAFKA_BOOTSTRAP_SERVERS", DEFAULT_BOOTSTRAP_SERVERS
+            "ATMOSYNC_KAFKA_BOOTSTRAP_SERVERS",
+            os.environ.get("KAFKA_BOOTSTRAP_SERVERS", DEFAULT_BOOTSTRAP_SERVERS),
         ),
     )
     parser.add_argument(

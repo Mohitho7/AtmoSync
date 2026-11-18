@@ -21,6 +21,10 @@ class FakeSnowflakeError(Exception):
     pass
 
 
+class OperationalError(FakeSnowflakeError):
+    pass
+
+
 class FakeCursor:
     def __init__(self, rowcount=1):
         self.rowcount = rowcount
@@ -126,6 +130,19 @@ class SnowflakeClientTests(unittest.TestCase):
         self.assertEqual(str(error.exception), "Snowflake connection failed")
         self.assertNotIn(secret, str(error.exception))
 
+    def test_operational_connection_failure_is_marked_retryable(self):
+        def fail_connect(**_parameters):
+            raise OperationalError("temporary network failure")
+
+        client = SnowflakeClient(
+            valid_config(),
+            connection_factory=fail_connect,
+            connector_error_type=FakeSnowflakeError,
+        )
+        with self.assertRaises(SnowflakeClientError) as error:
+            client.connect()
+        self.assertTrue(error.exception.retryable)
+
     def test_connectivity_and_context_manager_close_cursor_and_connection(self):
         connection = FakeConnection()
         client = SnowflakeClient(
@@ -190,6 +207,23 @@ class SnowflakeClientTests(unittest.TestCase):
         self.assertEqual(parameters, first_record.insert_parameters())
         self.assertTrue(connection.cursors[0].closed)
         self.assertTrue(connection.cursors[1].closed)
+
+    def test_merge_with_unknown_row_count_is_not_acknowledged_as_success(self):
+        event = load_event()
+        connection = FakeConnection(rowcounts=(-1,))
+        client = SnowflakeClient(
+            valid_config(),
+            connection_factory=lambda **_parameters: connection,
+            connector_error_type=FakeSnowflakeError,
+        )
+        with self.assertRaisesRegex(SnowflakeClientError, "affected-row count"):
+            client.insert_raw_event(
+                event,
+                kafka_topic="sensor-events-validated",
+                kafka_partition=0,
+                kafka_offset=1,
+            )
+        self.assertTrue(connection.cursors[0].closed)
 
     def test_invalid_kafka_coordinates_are_rejected_before_connection(self):
         client = SnowflakeClient(

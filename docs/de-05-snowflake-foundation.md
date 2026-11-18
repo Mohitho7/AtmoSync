@@ -34,9 +34,11 @@ RAW write.
 
 ## Environment configuration
 
-Copy `.env.example` to a local, ignored `.env` file and fill in values through
-your usual environment-loading mechanism. The application does not load `.env`
-files itself.
+Copy `.env.example` to a local, ignored `.env` file and fill in the values.
+Consumer CLIs and `SnowflakeConfig.from_env()` load `.env` through the shared
+`python-dotenv` helper without overriding variables already injected by the
+runtime. Direct configuration construction continues to use the supplied
+environment mapping.
 
 Required for password authentication:
 

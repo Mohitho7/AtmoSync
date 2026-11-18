@@ -11,6 +11,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterator, Mapping
 
+from .config import load_environment
 from .processor import payload_sha256
 
 LOGGER = logging.getLogger(__name__)
@@ -21,6 +22,10 @@ _IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_$]*\Z")
 
 class SnowflakeClientError(RuntimeError):
     """Raised when Snowflake configuration or an operation is unavailable."""
+
+    def __init__(self, message: str, *, retryable: bool = False) -> None:
+        super().__init__(message)
+        self.retryable = retryable
 
 
 @dataclass(frozen=True)
@@ -60,6 +65,8 @@ class SnowflakeConfig:
         cls, environ: Mapping[str, str] | None = None
     ) -> SnowflakeConfig:
         """Create configuration from environment variables without logging values."""
+        if environ is None:
+            load_environment()
         env = environ if environ is not None else os.environ
         authenticator = env.get("SNOWFLAKE_AUTHENTICATOR", "snowflake").strip()
         if authenticator not in _SUPPORTED_AUTHENTICATORS:
@@ -226,6 +233,12 @@ class SnowflakeClient:
             ) from error
         return connector.connect, ConnectorError
 
+    @staticmethod
+    def _is_retryable_connector_error(error: Exception) -> bool:
+        return isinstance(error, (TimeoutError, ConnectionError)) or type(
+            error
+        ).__name__ in {"InterfaceError", "NetworkError", "OperationalError"}
+
     def connect(self) -> Any:
         """Open one connection, reusing it for the life of this client."""
         if self._connection is not None:
@@ -240,7 +253,10 @@ class SnowflakeClient:
                 "snowflake_connection_failed",
                 extra={"database": self.config.database, "schema": self.config.schema},
             )
-            raise SnowflakeClientError("Snowflake connection failed") from error
+            raise SnowflakeClientError(
+                "Snowflake connection failed",
+                retryable=self._is_retryable_connector_error(error),
+            ) from error
         LOGGER.info(
             "snowflake_connected",
             extra={"database": self.config.database, "schema": self.config.schema},
@@ -254,18 +270,25 @@ class SnowflakeClient:
         try:
             cursor = connection.cursor()
         except error_type as error:
-            raise SnowflakeClientError("Could not create Snowflake cursor") from error
+            raise SnowflakeClientError(
+                "Could not create Snowflake cursor",
+                retryable=self._is_retryable_connector_error(error),
+            ) from error
         try:
             yield cursor
         except error_type as error:
-            raise SnowflakeClientError("Snowflake operation failed") from error
+            raise SnowflakeClientError(
+                "Snowflake operation failed",
+                retryable=self._is_retryable_connector_error(error),
+            ) from error
         finally:
             try:
                 cursor.close()
             except error_type as error:
                 if sys.exc_info()[0] is None:
                     raise SnowflakeClientError(
-                        "Could not close Snowflake cursor"
+                        "Could not close Snowflake cursor",
+                        retryable=self._is_retryable_connector_error(error),
                     ) from error
                 LOGGER.error(
                     "snowflake_cursor_close_failed",
@@ -336,7 +359,13 @@ class SnowflakeClient:
         """
         with self._cursor() as cursor:
             cursor.execute(statement, record.insert_parameters())
-            return cursor.rowcount == 1
+            if cursor.rowcount == 1:
+                return True
+            if cursor.rowcount == 0:
+                return False
+            raise SnowflakeClientError(
+                "Snowflake MERGE returned an unexpected affected-row count"
+            )
 
     def close(self) -> None:
         """Close the current connection; repeated calls are safe."""
@@ -352,7 +381,10 @@ class SnowflakeClient:
                 "snowflake_connection_close_failed",
                 extra={"database": self.config.database, "schema": self.config.schema},
             )
-            raise SnowflakeClientError("Could not close Snowflake connection") from error
+            raise SnowflakeClientError(
+                "Could not close Snowflake connection",
+                retryable=self._is_retryable_connector_error(error),
+            ) from error
 
     def __enter__(self) -> SnowflakeClient:
         self.connect()
