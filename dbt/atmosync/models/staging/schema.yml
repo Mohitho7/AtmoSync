@@ -1,0 +1,46 @@
+version: 2
+
+models:
+  - name: stg_sensor_events
+    description: >
+      Cleaned sensor-event staging table. Payload VARIANT fields are extracted
+      once and numeric readings are converted safely with TRY_TO_DOUBLE.
+    columns:
+      - name: kafka_source_key
+        description: Composite Kafka source identity used for replay-safe uniqueness.
+        data_tests:
+          - unique
+          - not_null
+      - name: event_id
+        description: Canonical sensor-event UUID.
+        data_tests:
+          - not_null
+      - name: shipment_id
+        data_tests:
+          - not_null
+      - name: container_id
+        data_tests:
+          - not_null
+      - name: sensor_id
+        data_tests:
+          - not_null
+      - name: event_timestamp
+        data_tests:
+          - not_null
+      - name: commodity_key
+        description: Trimmed lowercase commodity used for the mock pricing join.
+      - name: temperature_c
+        description: Extracted temperature reading.
+      - name: humidity_pct
+        description: Extracted humidity percentage.
+      - name: vibration_g
+        description: Extracted vibration reading.
+      - name: kafka_topic
+        data_tests:
+          - not_null
+      - name: kafka_partition
+        data_tests:
+          - not_null
+      - name: kafka_offset
+        data_tests:
+          - not_null

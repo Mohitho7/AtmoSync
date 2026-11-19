@@ -1,6 +1,10 @@
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
 snowflake = ["snowflake-connector-python>=3.12,<5.0"]
+dbt = [
+    "dbt-core>=1.12,<1.13",
+    "dbt-snowflake>=1.12,<1.13",
+]
 
 [build-system]
 requires = ["setuptools>=68"]

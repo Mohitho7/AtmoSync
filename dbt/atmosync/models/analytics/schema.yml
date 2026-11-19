@@ -1,0 +1,25 @@
+version: 2
+
+models:
+  - name: fact_sensor_events
+    description: >
+      Sensor-event fact table enriched with mock commodity-pricing data.
+      The join is an exact normalized commodity-key left join, so unmatched
+      or synthetic commodities remain visible rather than being discarded.
+    columns:
+      - name: kafka_source_key
+        description: Unique Kafka source coordinate key.
+        data_tests:
+          - unique
+          - not_null
+      - name: event_id
+        data_tests:
+          - not_null
+      - name: commodity_key
+        description: Null or normalized commodity key used for pricing.
+      - name: commodity_price_matched
+        description: True only when a mock commodity price exists.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [true, false]

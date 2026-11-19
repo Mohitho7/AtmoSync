@@ -1,0 +1,61 @@
+version: 2
+
+sources:
+  - name: atmosync_raw
+    description: >
+      Live AtmoSync sensor ingestion tables. SENSOR_EVENTS contains one row
+      per Kafka source coordinate and retains the complete validated event in
+      a Snowflake VARIANT payload.
+    database: ATMOSYNC
+    schema: RAW
+    tables:
+      - name: sensor_events
+        description: >
+          Raw landing table for validated sensor events. Kafka source identity
+          is (KAFKA_TOPIC, KAFKA_PARTITION, KAFKA_OFFSET). PAYLOAD contains the
+          complete original sensor-event contract.
+        columns:
+          - name: EVENT_ID
+            description: Canonical UUID for the sensor event.
+            data_tests:
+              - not_null
+          - name: SHIPMENT_ID
+            description: Shipment identifier carried by the payload.
+            data_tests:
+              - not_null
+          - name: CONTAINER_ID
+            description: Container identifier carried by the payload.
+            data_tests:
+              - not_null
+          - name: SENSOR_ID
+            description: Sensor identifier carried by the payload.
+            data_tests:
+              - not_null
+          - name: EVENT_TIMESTAMP
+            description: Validated event timestamp in Snowflake TIMESTAMP_TZ form.
+            data_tests:
+              - not_null
+          - name: KAFKA_TOPIC
+            description: Topic containing the validated record.
+            data_tests:
+              - not_null
+          - name: KAFKA_PARTITION
+            description: Kafka partition of the validated record.
+            data_tests:
+              - not_null
+          - name: KAFKA_OFFSET
+            description: Kafka offset of the validated record.
+            data_tests:
+              - not_null
+          - name: INGESTED_AT
+            description: Snowflake server timestamp for ingestion.
+            data_tests:
+              - not_null
+          - name: PAYLOAD
+            description: Complete validated sensor-event JSON in VARIANT form.
+            data_tests:
+              - not_null
+          - name: PAYLOAD_SHA256
+            description: Deterministic SHA-256 payload digest.
+            data_tests:
+              - not_null

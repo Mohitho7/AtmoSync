@@ -1,0 +1,27 @@
+name: atmosync
+version: "1.0.0"
+config-version: 2
+
+profile: atmosync
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+
+clean-targets:
+  - target
+  - dbt_packages
+
+models:
+  atmosync:
+    staging:
+      +schema: STAGING
+      +materialized: table
+    analytics:
+      +schema: ANALYTICS
+      +materialized: table
+
+seeds:
+  atmosync:
+    +schema: STAGING
