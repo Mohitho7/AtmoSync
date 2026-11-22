@@ -76,11 +76,9 @@ My responsibility is to build the data ingestion pipeline, beginning with simula
 
 ### Phase 3 — Data Transformation and Analytics
 
-- Create staging models using dbt.
-- Clean and standardize incoming sensor data.
-- Build analytical models for shipment monitoring.
-- Calculate relevant environmental and shipment metrics.
-- Support spoilage-risk and shipment anomaly analysis.
+- DE-05 Day 3 dbt staging and Snowflake integration are implemented.
+- DE-05 Day 4 SQL analytics and rule-based monitoring marts are implemented;
+  see [Day 4 analytics and risk models](docs/de-05-day-4-sql-analytics-risk-models.md).
 
 ### Phase 4 — Dashboard and Operational Insights
 
@@ -90,7 +88,7 @@ My responsibility is to build the data ingestion pipeline, beginning with simula
 - Present potential spoilage risks and actionable insights.
 - Support shipment rerouting analysis.
 
-*Phases 3 and 4 represent the broader project roadmap, not completed work in this branch.*
+*Superset dashboards and production certification remain future work.*
 
 ## 6. DE-01 — Python Environment Setup
 
@@ -141,10 +139,9 @@ The virtual environment is excluded from version control.
 
 ## 7. Current Development Status
 
-**Latest completed implementation milestone:** DE-04E downstream consumer
-groups, built on DE-04D retry/DLQ processing. DE-04F local reliability tests
-and DE-04G documentation are present, with validation limitations explicitly
-noted in the milestone reports.
+**Latest completed implementation milestone:** DE-05 Day 4 SQL analytics and
+risk models, built on DE-05 Day 3 dbt/Snowflake transformations. Live-data
+volume and scoring limitations are documented.
 
 | Area | Current status |
 |---|---|
@@ -158,6 +155,8 @@ noted in the milestone reports.
 | DE-04E downstream consumers and consumer groups | Implemented; unit and live Kafka integration coverage present |
 | DE-04F performance and reliability testing | Local tests and actual small-workload measurements documented; incomplete as production-style validation |
 | DE-04G architecture and verification documentation | Complete documentation set present; limitations and evidence recorded |
+| DE-05 Day 3 dbt and Snowflake staging | Implemented and live dbt-validated |
+| DE-05 Day 4 SQL analytics and risk marts | Implemented; live validation and data-volume limitations documented |
 | Project structure | Created |
 | Git initialization | Completed |
 | GitHub branch synchronization | MOHITH branch synchronized through the active working tree |
@@ -177,8 +176,7 @@ production-readiness claims.
 
 Bounded retry handling and DLQ routing are implemented and tested. A
 dedicated DLQ consumer, remediation, or replay application is not implemented.
-Broader Snowflake, dbt, and dashboard work remains outside the scope of the
-current code and documentation in this branch.
+Superset dashboards remain outside the scope of the current implementation.
 
 ## 9. Local Development Setup
 

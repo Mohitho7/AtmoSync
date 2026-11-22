@@ -25,3 +25,17 @@ models:
 seeds:
   atmosync:
     +schema: STAGING
+
+vars:
+  atmosync:
+    demo_temperature_min_c: -20.0
+    demo_temperature_max_c: 40.0
+    demo_humidity_min_pct: 20.0
+    demo_humidity_max_pct: 90.0
+    demo_vibration_max_g: 5.0
+    demo_temperature_change_threshold_c: 5.0
+    risk_temperature_points: 40
+    risk_humidity_points: 30
+    risk_vibration_points: 30
+    risk_medium_min_score: 30
+    risk_high_min_score: 60

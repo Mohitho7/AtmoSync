@@ -1,6 +1,184 @@
 version: 2
 
 models:
+  - name: mart_sensor_health
+    description: >
+      Event-grain assessment of reading completeness and measurement status.
+      SENSOR_HEALTH_STATUS describes the observation only; it is not evidence
+      of a hardware failure or offline sensor.
+    columns:
+      - name: kafka_source_key
+        data_tests:
+          - unique
+          - not_null
+      - name: event_id
+        data_tests:
+          - not_null
+      - name: shipment_id
+        data_tests:
+          - not_null
+      - name: container_id
+        data_tests:
+          - not_null
+      - name: sensor_id
+        data_tests:
+          - not_null
+      - name: sensor_health_status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [DATA_QUALITY_ISSUE, ABNORMAL_READING, OBSERVATION_OK]
+      - name: data_quality_status
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [MISSING_REQUIRED_READING, INVALID_READING, COMPLETE]
+      - name: sensor_health_score
+        data_tests:
+          - not_null
+      - name: temperature_status
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [MISSING, INVALID_NUMERIC, ABNORMAL, NORMAL]
+      - name: humidity_status
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [MISSING, INVALID, ABNORMAL, NORMAL]
+      - name: vibration_status
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [MISSING, INVALID, ABNORMAL, NORMAL]
+
+  - name: mart_temperature_fluctuations
+    description: >
+      Event-grain temperature deltas from the prior non-null observation for
+      the same shipment, container, and sensor. A large delta is not by itself
+      proof of a cold-chain violation.
+    columns:
+      - name: kafka_source_key
+        data_tests:
+          - unique
+          - not_null
+      - name: event_id
+        data_tests:
+          - not_null
+      - name: temperature_change_status
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - NO_VALID_TEMPERATURE
+                  - FIRST_OBSERVATION
+                  - LARGE_CHANGE
+                  - WITHIN_THRESHOLD
+
+  - name: mart_container_risk
+    description: >
+      Event-grain provisional rule-based condition score. Incomplete or invalid
+      readings receive NOT_ASSESSABLE and a NULL score, not a safe/low score.
+      The score is not a certified cargo limit or machine-learning prediction.
+    columns:
+      - name: kafka_source_key
+        data_tests:
+          - unique
+          - not_null
+      - name: event_id
+        data_tests:
+          - not_null
+      - name: risk_classification
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [NOT_ASSESSABLE, LOW, MEDIUM, HIGH]
+      - name: risk_score
+        description: Null when required readings are incomplete or invalid.
+
+  - name: mart_route_risk
+    description: >
+      Event-grain location monitoring view. Only point coordinates are present;
+      no route ID, planned path, route segment, deviation, or route risk score
+      is claimed.
+    columns:
+      - name: kafka_source_key
+        data_tests:
+          - unique
+          - not_null
+      - name: shipment_id
+        data_tests:
+          - not_null
+      - name: container_id
+        data_tests:
+          - not_null
+      - name: route_data_status
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [POINT_LOCATION_ONLY, LOCATION_UNAVAILABLE, INVALID_COORDINATES]
+
+  - name: mart_commodity_price_impact
+    description: >
+      Event-grain view of the existing synthetic mock price match. Exposure
+      remains NULL because neither price units nor shipment quantities are
+      available in the event or seed.
+    columns:
+      - name: kafka_source_key
+        data_tests:
+          - unique
+          - not_null
+      - name: event_id
+        data_tests:
+          - not_null
+      - name: pricing_data_origin
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [SYNTHETIC_MOCK]
+      - name: commodity_price_matched
+        data_tests:
+          - not_null
+
+  - name: mart_shipment_risk_summary
+    description: >
+      One row per shipment/container, aggregating event-grain condition,
+      quality, and pricing indicators without joining source events at
+      mismatched grains.
+    columns:
+      - name: shipment_id
+        data_tests:
+          - not_null
+      - name: container_id
+        data_tests:
+          - not_null
+      - name: total_events
+        data_tests:
+          - not_null
+      - name: commodity_price_matched_events
+        data_tests:
+          - not_null
+      - name: commodity_price_unmatched_events
+        data_tests:
+          - not_null
+      - name: distinct_shipments
+        data_tests:
+          - not_null
+      - name: distinct_containers
+        data_tests:
+          - not_null
+      - name: distinct_sensors
+        data_tests:
+          - not_null
+
   - name: fact_sensor_events
     description: >
       Sensor-event fact table enriched with mock commodity-pricing data.
